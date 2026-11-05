@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=io.github.sirwilliamdev.Hivetop
+Exec=@BINDIR@/hivetopd
+SystemdService=hivetopd.service

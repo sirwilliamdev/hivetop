@@ -1,0 +1,32 @@
+[package]
+name = "hivetop"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight GNOME top-bar resource monitor that groups usage by Claude Code session, app and container"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "hivetopd"
+path = "src/bin/hivetopd.rs"
+
+[[bin]]
+name = "hivetop"
+path = "src/bin/hivetop.rs"
+
+[dependencies]
+libc = "0.2.191"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.0"
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

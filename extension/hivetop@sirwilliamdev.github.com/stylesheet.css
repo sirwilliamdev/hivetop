@@ -1,0 +1,156 @@
+.hivetop-panel {
+    spacing: 10px;
+}
+
+.hivetop-metric {
+    spacing: 4px;
+}
+
+.hivetop-metric-key {
+    font-feature-settings: "tnum";
+}
+
+.hivetop-metric-value {
+    min-width: 2.3em;
+    font-feature-settings: "tnum";
+}
+
+.hivetop-bee-1 {
+    color: #f6d32d;
+}
+
+.hivetop-bee-2 {
+    color: #ff6b5e;
+}
+
+.hivetop-menu {
+    min-width: 560px;
+    max-width: 560px;
+}
+
+.hivetop-scroll {
+    padding-right: 2px;
+}
+
+.hivetop-section-header {
+    spacing: 6px;
+}
+
+.hivetop-section-title {
+    font-weight: normal;
+}
+
+.hivetop-warn-header .hivetop-section-title {
+    color: #ffa348;
+    font-weight: bold;
+}
+
+.hivetop-line {
+    spacing: 10px;
+}
+
+.hivetop-title {
+    font-weight: bold;
+    max-width: 260px;
+}
+
+.hivetop-sub {
+    font-size: 0.85em;
+    color: #9a9996;
+    max-width: 300px;
+}
+
+.hivetop-num {
+    min-width: 64px;
+    font-feature-settings: "tnum";
+}
+
+.hivetop-num-cpu {
+    min-width: 44px;
+}
+
+.hivetop-num-wide {
+    min-width: 140px;
+}
+
+.hivetop-spark {
+    width: 72px;
+    height: 20px;
+}
+
+.hivetop-chart {
+    width: 470px;
+    height: 72px;
+    margin-bottom: 4px;
+}
+
+.hivetop-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+}
+
+.hivetop-status-busy {
+    background-color: #57e389;
+}
+
+.hivetop-status-idle {
+    background-color: #77767b;
+}
+
+.hivetop-status-orphan {
+    background-color: #ffa348;
+}
+
+.hivetop-app-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.hivetop-action-box {
+    spacing: 8px;
+}
+
+.hivetop-btn {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.9em;
+}
+
+.hivetop-btn-small {
+    padding: 1px 8px;
+    font-size: 0.85em;
+}
+
+.hivetop-icon-btn {
+    padding: 3px;
+    border-radius: 6px;
+}
+
+.hivetop-btn-danger:hover {
+    color: #ff7b63;
+}
+
+.hivetop-armed,
+.hivetop-armed:hover {
+    background-color: #c01c28;
+    color: #ffffff;
+}
+
+.hivetop-proc {
+    font-size: 0.9em;
+}
+
+.hivetop-pid {
+    min-width: 56px;
+    color: #9a9996;
+    font-feature-settings: "tnum";
+}
+
+.hivetop-cmd {
+    max-width: 280px;
+}
+
+.hivetop-infra {
+    color: #9a9996;
+}

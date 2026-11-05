@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Extension syntax and schema
+        run: |
+          sudo apt-get install -y --no-install-recommends libglib2.0-bin
+          ext=extension/hivetop@sirwilliamdev.github.com
+          tmp=$(mktemp -d)
+          for f in "$ext"/*.js "$ext"/lib/*.js; do
+            cp "$f" "$tmp/$(basename "$f" .js).mjs"
+            node --check "$tmp/$(basename "$f" .js).mjs"
+          done
+          glib-compile-schemas --strict --dry-run "$ext/schemas"
+          bash -n install.sh scripts/nested-test.sh

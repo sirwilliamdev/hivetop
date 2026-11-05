@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="200" viewBox="0 0 240 200">
+  <title>hivetop</title>
+  <path d="M150 68 C 134 72 142 94 126 104" fill="none" stroke="#c27c14" stroke-width="2.5" stroke-dasharray="5 5" stroke-linecap="round"/>
+  <g fill="#f2b33d" stroke="#c27c14" stroke-width="3">
+    <ellipse cx="100" cy="42" rx="10" ry="7"/>
+    <rect x="78" y="44" width="44" height="26" rx="13"/>
+    <rect x="64" y="65" width="72" height="29" rx="14.5"/>
+    <rect x="52" y="89" width="96" height="30" rx="15"/>
+    <rect x="42" y="114" width="116" height="30" rx="15"/>
+    <rect x="35" y="140" width="130" height="30" rx="15"/>
+  </g>
+  <path d="M86 170 v-13 a14 14 0 0 1 28 0 v13 Z" fill="#4a2c0a"/>
+  <rect x="28" y="168" width="144" height="12" rx="4" fill="#8b5a2b"/>
+  <g transform="translate(148 28) scale(3.4)">
+    <g fill="#eaf4ff" stroke="#7fa7cf" stroke-width="0.35">
+      <ellipse cx="5.6" cy="3.9" rx="2.3" ry="3.1" transform="rotate(-25 5.6 3.9)"/>
+      <ellipse cx="9.4" cy="3.9" rx="2.3" ry="3.1" transform="rotate(25 9.4 3.9)"/>
+    </g>
+    <ellipse cx="6.9" cy="10.6" rx="5.4" ry="4" fill="#ffc93c"/>
+    <g fill="#2b2b2b">
+      <rect x="4.6" y="6.8" width="1.5" height="7.6"/>
+      <rect x="7.9" y="6.85" width="1.5" height="7.5"/>
+    </g>
+    <ellipse cx="6.9" cy="10.6" rx="5.4" ry="4" fill="none" stroke="#2b2b2b" stroke-width="0.5"/>
+    <circle cx="13.6" cy="9.9" r="2.2" fill="#2b2b2b"/>
+    <circle cx="14.3" cy="9.3" r="0.55" fill="#ffffff"/>
+    <path d="M1.8 9.7 L0 10.6 L1.8 11.5 Z" fill="#2b2b2b"/>
+  </g>
+</svg>
