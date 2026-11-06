@@ -13,7 +13,7 @@ Menu:      System: 12 cores, calm                      ~~~    12%    65%
            > Background Claude (2)                            0.3%  341 MB
            > Apps (12)                                         10%   12 GB
            > Docker (1)                                       0.2%   65 MB
-             History                                                     >
+           > History   last 24h: average CPU and RAM           11%  9.8 GB
 ```
 
 Sections start collapsed every time the menu opens; click a header to expand

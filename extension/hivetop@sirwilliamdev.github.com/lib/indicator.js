@@ -9,7 +9,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {Client, isCancelled} from './client.js';
 import * as fmt from './format.js';
-import {HistoryRow} from './history.js';
+import {HistorySection} from './history.js';
 import {AppRow, LineItem, OrphanRow, SessionRow, StackRow, appKey, clearAppCache, systemItem} from './rows.js';
 import {SectionHeader, ensureVisible, later, syncKeyed} from './widgets.js';
 
@@ -185,9 +185,8 @@ class HivetopIndicator extends PanelMenu.Button {
         this._background = new KeyedSection(content, 'Background Claude', reveal);
         this._apps = new KeyedSection(content, 'Apps', reveal);
         this._stacks = new KeyedSection(content, 'Docker', reveal);
+        this._history = new HistorySection(content, this._ctx);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._history = new HistoryRow(this._ctx);
-        this.menu.addMenuItem(this._history);
         const prefs = new PopupMenu.PopupMenuItem('Settings');
         prefs.connect('activate', () => this._extension.openPreferences());
         this.menu.addMenuItem(prefs);
@@ -195,7 +194,7 @@ class HivetopIndicator extends PanelMenu.Button {
     }
 
     _sections() {
-        return [this._sessions, this._orphans, this._background, this._apps, this._stacks];
+        return [this._sessions, this._orphans, this._background, this._apps, this._stacks, this._history];
     }
 
     _setAvailable(up) {
