@@ -40,7 +40,7 @@ class HivetopHistoryRow extends PopupMenu.PopupSubMenuMenuItem {
         chartItem.add_child(chartBox);
         this.menu.addMenuItem(chartItem);
 
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Top by average RAM  (avg / peak, avg CPU)'));
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Top by average RAM  (avg CPU, RAM avg / peak)'));
         this._ranking = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._ranking);
         this.menu.connect('open-state-changed', (_menu, open) => {

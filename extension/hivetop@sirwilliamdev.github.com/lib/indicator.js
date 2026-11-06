@@ -43,7 +43,7 @@ class KeyedSection {
         this.section.actor.visible = false;
     }
 
-    /** `summary` is `{sub, mem, cpu}` for the header. */
+    /** `summary` is `{sub, cpu, mem}` for the header. */
     sync(items, keyOf, create, summary = {}) {
         this._last = {items, keyOf, create};
         this.header.line.set({title: `${this.title} (${items.length})`, ...summary});
@@ -305,8 +305,8 @@ class HivetopIndicator extends PanelMenu.Button {
             title: `System: ${snap.ncpu} cores, ${PRESSURE_TEXT[Math.min(2, sys.pressure)]}`,
             sub: `RAM ${fmt.bytes(sys.mem_used)} / ${fmt.bytes(sys.mem_total)}, swap ${fmt.bytes(sys.swap_used)}. ` +
                 `PSI cpu ${psi.cpu_some.toFixed(0)} mem ${psi.memory_some.toFixed(0)} io ${psi.io_some.toFixed(0)}`,
-            mem: fmt.pct(memPct),
             cpu: fmt.pct(sys.cpu),
+            mem: fmt.pct(memPct),
         });
         this._system.line.spark.setData(sys.spark, {span: 600, cpuMax: 100, memMax: 100});
 
@@ -314,22 +314,22 @@ class HivetopIndicator extends PanelMenu.Button {
         const busy = interactive.filter(s => s.status === 'busy').length;
         this._sessions.sync(interactive, s => s.key, () => new SessionRow(this._ctx), {
             sub: `${busy} busy, ${interactive.length - busy} idle`,
-            mem: fmt.bytes(sum(interactive, s => s.rss + s.container_mem)),
             cpu: this._ctx.cpu(sum(interactive, s => s.cpu + s.container_cpu)),
+            mem: fmt.bytes(sum(interactive, s => s.rss + s.container_mem)),
         });
 
         this._orphans.sync(snap.orphans, o => o.session_id, () => new OrphanRow(this._ctx), {
             sub: `${sum(snap.orphans, o => o.procs)} process(es), ${sum(snap.orphans, o => o.containers.length)} container(s) still running`,
-            mem: fmt.bytes(sum(snap.orphans, o => o.rss)),
             cpu: this._ctx.cpu(sum(snap.orphans, o => o.cpu)),
+            mem: fmt.bytes(sum(snap.orphans, o => o.rss)),
         });
 
         const background = snap.sessions.filter(s => s.background).map(s => ({
             key: s.key,
             title: s.name,
             sub: `${s.entrypoint} in ${fmt.homeShort(s.cwd, this._ctx.home)}`,
-            mem: fmt.bytes(s.rss),
             cpu: this._ctx.cpu(s.cpu),
+            mem: fmt.bytes(s.rss),
             status: s.status === 'busy' ? 'busy' : 'idle',
             rss: s.rss,
             cpuValue: s.cpu,
@@ -339,16 +339,16 @@ class HivetopIndicator extends PanelMenu.Button {
                 key: 'tooling',
                 title: 'Shared Claude tooling',
                 sub: `${snap.tooling.procs} process(es) outside any session, e.g. plugin workers`,
-                mem: fmt.bytes(snap.tooling.rss),
                 cpu: this._ctx.cpu(snap.tooling.cpu),
+                mem: fmt.bytes(snap.tooling.rss),
                 rss: snap.tooling.rss,
                 cpuValue: snap.tooling.cpu,
             });
         }
         this._background.sync(background, b => b.key, b => new LineItem({status: b.key !== 'tooling'}), {
             sub: 'SDK sessions and plugin workers',
-            mem: fmt.bytes(sum(background, b => b.rss)),
             cpu: this._ctx.cpu(sum(background, b => b.cpuValue)),
+            mem: fmt.bytes(sum(background, b => b.rss)),
         });
 
         const merged = new Map();
@@ -370,8 +370,8 @@ class HivetopIndicator extends PanelMenu.Button {
         const apps = [...merged.values()];
         this._apps.sync(apps, a => a.key, () => new AppRow(this._ctx), {
             sub: 'largest apps by memory, Claude sessions included',
-            mem: fmt.bytes(sum(apps, a => a.mem)),
             cpu: this._ctx.cpu(sum(apps, a => a.cpu)),
+            mem: fmt.bytes(sum(apps, a => a.mem)),
         });
 
         const stacks = new Map();
@@ -384,8 +384,8 @@ class HivetopIndicator extends PanelMenu.Button {
         }
         this._stacks.sync([...stacks.values()], g => g.project || g.containers[0].name, () => new StackRow(this._ctx), {
             sub: snap.docker_ok ? 'containers not started by a Claude session' : 'Docker not reachable',
-            mem: fmt.bytes(sum(loose, c => c.mem)),
             cpu: this._ctx.cpu(sum(loose, c => c.cpu)),
+            mem: fmt.bytes(sum(loose, c => c.mem)),
         });
     }
 

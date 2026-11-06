@@ -84,7 +84,7 @@ export function confirmButton(label, onConfirm, extraClass = '') {
     return b;
 }
 
-/** `[status dot] [icon] [title / subtitle] [sparkline] [mem] [cpu]` */
+/** `[status dot] [icon] [title / subtitle] [sparkline] [cpu] [mem]` */
 export class StatLine {
     constructor({spark = false, icon = false, status = false} = {}) {
         this.actor = new St.BoxLayout({style_class: 'hivetop-line', x_expand: true});
@@ -107,18 +107,18 @@ export class StatLine {
             this.spark.y_align = CENTER;
             this.actor.add_child(this.spark);
         }
-        [this.memBin, this.mem] = numCell();
         [this.cpuBin, this.cpu] = numCell('hivetop-num hivetop-num-cpu');
-        this.actor.add_child(this.memBin);
+        [this.memBin, this.mem] = numCell();
         this.actor.add_child(this.cpuBin);
+        this.actor.add_child(this.memBin);
     }
 
-    set({title = '', sub = '', mem = '', cpu = ''}) {
+    set({title = '', sub = '', cpu = '', mem = ''}) {
         this.title.text = title;
         this.sub.text = sub;
         this.sub.visible = sub !== '';
-        this.mem.text = mem;
         this.cpu.text = cpu;
+        this.mem.text = mem;
     }
 
     setStatus(status) {
@@ -199,9 +199,9 @@ class HivetopProcessItem extends PopupMenu.PopupBaseMenuItem {
         this._pid = new St.Label({style_class: 'hivetop-pid', y_align: CENTER});
         this._cmd = ellipsized('hivetop-cmd');
         this._cmd.x_expand = true;
-        [this._memBin, this._mem] = numCell();
         [this._cpuBin, this._cpu] = numCell('hivetop-num hivetop-num-cpu');
-        for (const a of [this._pid, this._cmd, this._memBin, this._cpuBin])
+        [this._memBin, this._mem] = numCell();
+        for (const a of [this._pid, this._cmd, this._cpuBin, this._memBin])
             box.add_child(a);
         box.add_child(iconButton('edit-copy-symbolic',
             () => ctx.copy(`pid: ${this._p.pid}\ncommand: ${this._p.cmd}`), 'Copy'));
@@ -220,8 +220,8 @@ class HivetopProcessItem extends PopupMenu.PopupBaseMenuItem {
             this._cmd.add_style_class_name('hivetop-infra');
         else
             this._cmd.remove_style_class_name('hivetop-infra');
-        this._mem.text = fmt.bytes(p.rss);
         this._cpu.text = this._ctx.cpu(p.cpu);
+        this._mem.text = fmt.bytes(p.rss);
     }
 });
 
@@ -234,9 +234,9 @@ class HivetopContainerItem extends PopupMenu.PopupBaseMenuItem {
         const icon = new St.Icon({icon_name: 'application-x-firmware-symbolic', icon_size: 14, y_align: CENTER});
         this._name = ellipsized('hivetop-cmd');
         this._name.x_expand = true;
-        [this._memBin, this._mem] = numCell();
         [this._cpuBin, this._cpu] = numCell('hivetop-num hivetop-num-cpu');
-        for (const a of [icon, this._name, this._memBin, this._cpuBin])
+        [this._memBin, this._mem] = numCell();
+        for (const a of [icon, this._name, this._cpuBin, this._memBin])
             box.add_child(a);
         box.add_child(iconButton('edit-copy-symbolic', () => {
             const c = this._c;
@@ -250,8 +250,8 @@ class HivetopContainerItem extends PopupMenu.PopupBaseMenuItem {
     update(c) {
         this._c = c;
         this._name.text = `${c.name}${c.oneoff ? '  (run)' : ''}`;
-        this._mem.text = fmt.bytes(c.mem);
         this._cpu.text = this._ctx.cpu(c.cpu);
+        this._mem.text = fmt.bytes(c.mem);
     }
 });
 

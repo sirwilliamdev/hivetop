@@ -69,15 +69,15 @@ fn print_status(snap: &Value) {
         }
         println!("\n{title} ({})", rows.len());
         println!(
-            "  {:<28} {:>9} {:>7} {:>5} {:>6} {:>7}  NOW",
-            "NAME", "RAM", "CPU", "PROCS", "STATUS", "AGE"
+            "  {:<28} {:>7} {:>9} {:>5} {:>6} {:>7}  NOW",
+            "NAME", "CPU", "RAM", "PROCS", "STATUS", "AGE"
         );
         for x in rows {
             println!(
-                "  {:<28} {:>9} {:>6.0}% {:>5} {:>6} {:>7}  {}",
+                "  {:<28} {:>6.0}% {:>9} {:>5} {:>6} {:>7}  {}",
                 truncate(s(x, "name"), 28),
-                bytes(u(x, "rss")),
                 num(x, "cpu"),
+                bytes(u(x, "rss")),
                 u(x, "procs"),
                 s(x, "status"),
                 duration(now.saturating_sub(u(x, "started_at"))),
@@ -86,10 +86,10 @@ fn print_status(snap: &Value) {
             let containers = list(x, "containers");
             if !containers.is_empty() {
                 println!(
-                    "  {:<28} {:>9} {:>6.0}%  {} container(s)",
+                    "  {:<28} {:>6.0}% {:>9}  {} container(s)",
                     "  + docker",
-                    bytes(u(x, "container_mem")),
                     num(x, "container_cpu"),
+                    bytes(u(x, "container_mem")),
                     containers.len()
                 );
             }
@@ -98,10 +98,10 @@ fn print_status(snap: &Value) {
     let tooling = &snap["tooling"];
     if u(tooling, "procs") > 0 {
         println!(
-            "\nShared Claude tooling: {} process(es), {}, {:.0}% CPU",
+            "\nShared Claude tooling: {} process(es), {:.0}% CPU, {}",
             u(tooling, "procs"),
-            bytes(u(tooling, "rss")),
-            num(tooling, "cpu")
+            num(tooling, "cpu"),
+            bytes(u(tooling, "rss"))
         );
     }
     let orphans = list(snap, "orphans");
@@ -109,10 +109,10 @@ fn print_status(snap: &Value) {
         println!("\nOrphans (left behind by ended sessions)");
         for o in orphans {
             println!(
-                "  {:<28} {:>9} {:>6.0}%  {} process(es), {} container(s), ended {} ago",
+                "  {:<28} {:>6.0}% {:>9}  {} process(es), {} container(s), ended {} ago",
                 truncate(s(o, "name"), 28),
-                bytes(u(o, "rss")),
                 num(o, "cpu"),
+                bytes(u(o, "rss")),
                 u(o, "procs"),
                 list(o, "containers").len(),
                 duration(now.saturating_sub(u(o, "ended_at")))
@@ -129,10 +129,10 @@ fn print_status(snap: &Value) {
             n => format!("  incl. {n} Claude session(s)"),
         };
         println!(
-            "  {:<36} {:>9} {:>6.0}%{note}",
+            "  {:<36} {:>6.0}% {:>9}{note}",
             truncate(s(a, "id"), 36),
-            bytes(u(a, "mem")),
-            num(a, "cpu")
+            num(a, "cpu"),
+            bytes(u(a, "mem"))
         );
     }
     let containers = list(snap, "containers");
@@ -152,10 +152,10 @@ fn print_status(snap: &Value) {
                 String::new()
             };
             println!(
-                "  {:<36} {:>9} {:>6.0}%  {owner}",
+                "  {:<36} {:>6.0}% {:>9}  {owner}",
                 truncate(s(c, "name"), 36),
-                bytes(u(c, "mem")),
-                num(c, "cpu")
+                num(c, "cpu"),
+                bytes(u(c, "mem"))
             );
         }
     } else if snap["docker_ok"].as_bool() == Some(false) {
@@ -188,17 +188,18 @@ fn print_history(h: &Value) {
         println!("RAM  {}  peak {}", spark(&mem), bytes(peak_mem as u64));
     }
     println!(
-        "\n  {:<10} {:<34} {:>9} {:>9} {:>7} {:>7}",
-        "KIND", "NAME", "RAM AVG", "RAM PEAK", "CPU AVG", "MINUTES"
+        "\n  {:<10} {:<34} {:>8} {:>8} {:>9} {:>9} {:>7}",
+        "KIND", "NAME", "CPU AVG", "CPU PEAK", "RAM AVG", "RAM PEAK", "MINUTES"
     );
     for r in list(h, "ranking") {
         println!(
-            "  {:<10} {:<34} {:>9} {:>9} {:>6.0}% {:>7}",
+            "  {:<10} {:<34} {:>7.0}% {:>7.0}% {:>9} {:>9} {:>7}",
             s(r, "kind"),
             truncate(s(r, "label"), 34),
+            num(r, "cpu_avg"),
+            num(r, "cpu_max"),
             bytes(num(r, "mem_avg") as u64),
             bytes(num(r, "mem_max") as u64),
-            num(r, "cpu_avg"),
             u(r, "minutes")
         );
     }

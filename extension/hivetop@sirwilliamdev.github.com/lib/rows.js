@@ -94,8 +94,11 @@ function sessionDetails(s) {
         `status: ${s.status}`,
         `running: ${s.activity ?? '-'}`,
         s.scratchpad ? `scratchpad: ${s.scratchpad}` : null,
-        `memory: ${fmt.bytes(s.rss)} in ${s.procs} processes, cpu ${fmt.pct(s.cpu)} of one core`,
-        s.containers.length ? `containers: ${s.containers.length}, ${fmt.bytes(s.container_mem)}` : null,
+        `cpu: ${fmt.pct(s.cpu)} of one core`,
+        `memory: ${fmt.bytes(s.rss)} in ${s.procs} processes`,
+        s.containers.length
+            ? `containers: ${s.containers.length}, cpu ${fmt.pct(s.container_cpu)} of one core, memory ${fmt.bytes(s.container_mem)}`
+            : null,
     ].filter(Boolean).join('\n');
 }
 
@@ -126,7 +129,7 @@ class HivetopSessionRow extends ExpandableRow {
         let sub = s.activity ?? `${s.status} in ${fmt.homeShort(s.cwd, this._ctx.home)}`;
         if (s.containers.length)
             sub += `  + ${s.containers.length} container(s) ${fmt.bytes(s.container_mem)}`;
-        this.line.set({title: s.name, sub, mem: fmt.bytes(s.rss), cpu: this._ctx.cpu(s.cpu)});
+        this.line.set({title: s.name, sub, cpu: this._ctx.cpu(s.cpu), mem: fmt.bytes(s.rss)});
         this.line.setStatus(s.status === 'busy' ? 'busy' : 'idle');
         this.line.spark.setData(s.spark, {span: 600});
         this._goTo.label = s.app ? `Go to ${appName(s.app)}` : 'Go to window';
@@ -162,7 +165,7 @@ class HivetopOrphanRow extends ExpandableRow {
             parts.push(`${o.procs} process(es)`);
         if (o.containers.length)
             parts.push(`${o.containers.length} container(s)`);
-        this.line.set({title: o.name, sub: parts.join(', '), mem: fmt.bytes(o.rss), cpu: this._ctx.cpu(o.cpu)});
+        this.line.set({title: o.name, sub: parts.join(', '), cpu: this._ctx.cpu(o.cpu), mem: fmt.bytes(o.rss)});
         this.line.setStatus('orphan');
     }
 
@@ -226,7 +229,7 @@ class HivetopAppRow extends ExpandableRow {
             parts.push('desktop session');
         else if (a.kind === 'background')
             parts.push('background service');
-        this.line.set({title: app?.get_name() ?? a.ids[0], sub: parts.join(', '), mem: fmt.bytes(a.mem), cpu: this._ctx.cpu(a.cpu)});
+        this.line.set({title: app?.get_name() ?? a.ids[0], sub: parts.join(', '), cpu: this._ctx.cpu(a.cpu), mem: fmt.bytes(a.mem)});
         this.setExpandable(a.processes.length > 0);
     }
 
@@ -247,8 +250,8 @@ class HivetopStackRow extends ExpandableRow {
         this.line.set({
             title: g.project || 'containers',
             sub: `${g.containers.length} container(s)`,
-            mem: fmt.bytes(g.containers.reduce((n, c) => n + c.mem, 0)),
             cpu: this._ctx.cpu(g.containers.reduce((n, c) => n + c.cpu, 0)),
+            mem: fmt.bytes(g.containers.reduce((n, c) => n + c.mem, 0)),
         });
     }
 

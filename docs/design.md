@@ -7,12 +7,12 @@ session**, by **app** and by **container**. A plain process list would not.
 ```
 Top bar:   🐝 cpu 12%  ram 65%        (the bee turns yellow or red under CPU/memory/IO pressure)
 
-Menu:      System: 12 cores, calm                      ~~~    65%   12%
-           > Claude sessions (6)   2 busy, 4 idle            3.5 GB  3.4%
-           > Left behind by ended sessions (1)                 19 MB    0%
-           > Background Claude (2)                            341 MB  0.3%
-           > Apps (12)                                         12 GB   10%
-           > Docker (1)                                        65 MB  0.2%
+Menu:      System: 12 cores, calm                      ~~~    12%    65%
+           > Claude sessions (6)   2 busy, 4 idle             3.4%  3.5 GB
+           > Left behind by ended sessions (1)                  0%   19 MB
+           > Background Claude (2)                            0.3%  341 MB
+           > Apps (12)                                         10%   12 GB
+           > Docker (1)                                       0.2%   65 MB
              History                                                     >
 ```
 
