@@ -11,10 +11,14 @@
 //! So a process outside any app scope goes to its nearest ancestor's app, a
 //! process in a portal scope goes to the launcher scope it descends from, and
 //! portal scopes named after the same PID as a launcher scope are aliases.
+//!
+//! Processes already listed in a Claude section are then taken out of their
+//! app, so the menu shows each process once.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::cgroup::UnitUsage;
 use crate::procscan::Proc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -141,6 +145,46 @@ pub fn assign(
     out
 }
 
+/// Memory and CPU taken out of one unit by [`carve`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Carved {
+    pub mem: u64,
+    pub cpu: f64,
+    pub procs: usize,
+}
+
+/// Takes processes shown in another section out of the unit that owns them.
+/// Each entry is `(unit name, RssAnon + RssShmem, cpu)`. Memory taken is
+/// capped by what the unit holds, so an estimate larger than the cgroup
+/// leaves it at zero instead of wrapping.
+pub fn carve<'a>(
+    units: &mut HashMap<String, UnitUsage>,
+    taken: impl IntoIterator<Item = (&'a str, u64, f64)>,
+) -> HashMap<String, Carved> {
+    let mut want: HashMap<&str, Carved> = HashMap::new();
+    for (unit, mem, cpu) in taken {
+        let e = want.entry(unit).or_default();
+        e.mem += mem;
+        e.cpu += cpu;
+        e.procs += 1;
+    }
+    let mut out = HashMap::with_capacity(want.len());
+    for (name, w) in want {
+        let Some(u) = units.get_mut(name) else {
+            continue;
+        };
+        let got = Carved {
+            mem: w.mem.min(u.mem.mem),
+            cpu: w.cpu.min(u.cpu),
+            procs: w.procs,
+        };
+        u.mem.mem -= got.mem;
+        u.cpu -= got.cpu;
+        out.insert(name.to_string(), got);
+    }
+    out
+}
+
 fn norm(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_ascii_alphanumeric())
@@ -181,6 +225,57 @@ mod tests {
 
     fn unit(kind: &'static str, name: &str, id: &str) -> Arc<UnitRef> {
         Arc::new(UnitRef::new(kind, name.into(), id.into()))
+    }
+
+    fn usage(name: &str, mem: u64, cpu: f64) -> (String, UnitUsage) {
+        (
+            name.into(),
+            UnitUsage {
+                name: name.into(),
+                id: name.into(),
+                kind: "app",
+                mem: crate::cgroup::MemStat {
+                    mem,
+                    ..Default::default()
+                },
+                cpu,
+            },
+        )
+    }
+
+    #[test]
+    fn carve_takes_claude_out_of_its_app() {
+        let mut units: HashMap<String, UnitUsage> = [
+            usage("warp", 8000, 900.0),
+            usage("term", 100, 5.0),
+            usage("brave", 500, 10.0),
+        ]
+        .into_iter()
+        .collect();
+        let got = carve(
+            &mut units,
+            [
+                ("warp", 3000, 200.0),
+                ("warp", 2000, 70.0),
+                ("term", 400, 8.0),
+                ("gone", 50, 1.0),
+            ],
+        );
+        assert_eq!(units["warp"].mem.mem, 3000);
+        assert_eq!(units["warp"].cpu, 630.0);
+        assert_eq!(
+            got["warp"],
+            Carved {
+                mem: 5000,
+                cpu: 270.0,
+                procs: 2
+            }
+        );
+        assert_eq!(units["term"].mem.mem, 0, "capped at what the unit holds");
+        assert_eq!(units["term"].cpu, 0.0);
+        assert_eq!(got["term"].mem, 100);
+        assert_eq!(units["brave"].mem.mem, 500, "untouched");
+        assert!(!got.contains_key("gone"), "unknown unit is skipped");
     }
 
     #[test]

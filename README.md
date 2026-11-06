@@ -20,8 +20,8 @@ Remove with `./install.sh --uninstall`.
 
 - **Top bar**: `cpu` and `ram` usage. The bee turns yellow or red under CPU,
   memory or IO pressure.
-- **Menu**: Claude sessions, processes left behind by ended sessions, apps,
-  Docker, and 30 days of history.
+- **Menu**: Claude sessions (background ones last), processes left behind by
+  ended sessions, apps (Claude left out), Docker, and 30 days of history.
 - **CLI**: `hivetop status`, `hivetop history --range 7d`, `hivetop kill <session|pid>`.
 - **Config**: `~/.config/hivetop/config.toml`, see [`dist/config.example.toml`](dist/config.example.toml).
 

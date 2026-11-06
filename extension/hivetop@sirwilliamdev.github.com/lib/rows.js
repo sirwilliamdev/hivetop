@@ -222,7 +222,9 @@ class HivetopAppRow extends ExpandableRow {
         }
         const parts = [`${a.procs} process${a.procs === 1 ? '' : 'es'}`];
         if (a.sessions)
-            parts.push(`${a.sessions} Claude session${a.sessions === 1 ? '' : 's'}`);
+            parts.push(`${a.sessions} Claude session${a.sessions === 1 ? '' : 's'} (${fmt.bytes(a.claude_mem)} above)`);
+        else if (a.claude_mem)
+            parts.push(`Claude ${fmt.bytes(a.claude_mem)} above`);
         if (a.adopted)
             parts.push(`${a.adopted} started outside its scope`);
         if (a.kind === 'session')
@@ -257,6 +259,33 @@ class HivetopStackRow extends ExpandableRow {
 
     renderDetails() {
         this.syncItems(this.data.containers.map(c => c.id), []);
+    }
+});
+
+/**
+ * The last row of the Claude section: SDK sessions and shared tooling, as
+ * non-expandable lines.
+ */
+export const BackgroundRow = GObject.registerClass(
+class HivetopBackgroundRow extends ExpandableRow {
+    _init(ctx) {
+        super._init(ctx, {});
+        this._lines = new Map();
+    }
+
+    renderLine() {
+        const b = this.data;
+        this.line.set({
+            title: `Background (${b.items.length})`,
+            sub: 'SDK sessions and plugin workers',
+            cpu: this._ctx.cpu(b.cpu),
+            mem: fmt.bytes(b.rss),
+        });
+    }
+
+    renderDetails() {
+        syncKeyed(this.details, this._lines, this.data.items, x => x.key,
+            x => new LineItem({status: x.key !== 'tooling'}));
     }
 });
 

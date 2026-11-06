@@ -92,6 +92,8 @@ pub struct Sampler {
     scratchpads: HashMap<String, (Option<String>, Instant)>,
     session_cwds: HashMap<String, String>,
     orphans: OrphanTracker,
+    /// RssAnon + RssShmem by PID, read at most once per tick.
+    owned: HashMap<i32, u64>,
     prev_cpu: Option<system::CpuTimes>,
     last_tick: Option<Instant>,
     sys_spark: Spark,
@@ -121,6 +123,7 @@ impl Sampler {
             scratchpads: HashMap::new(),
             session_cwds: HashMap::new(),
             orphans: OrphanTracker::default(),
+            owned: HashMap::new(),
             prev_cpu: None,
             last_tick: None,
             sys_spark: Spark::default(),
@@ -213,6 +216,15 @@ impl Sampler {
         }
     }
 
+    /// Memory a process holds for itself: RssAnon + RssShmem.
+    fn owned(&mut self, pid: i32) -> u64 {
+        let proc_root = &self.roots.proc;
+        *self
+            .owned
+            .entry(pid)
+            .or_insert_with(|| procscan::read_rss_owned(proc_root, pid))
+    }
+
     fn is_tooling(&mut self, p: &Proc) -> bool {
         if let Some(&flag) = self.tooling.get(&p.key()) {
             return flag;
@@ -261,6 +273,7 @@ impl Sampler {
         self.last_tick = Some(now);
         let ts = crate::unix_now();
         let clk = self.scanner.clk_tck;
+        self.owned.clear();
 
         let stat = fs::read_to_string(self.roots.proc.join("stat")).unwrap_or_default();
         let (cpu_times, ncpu) =
@@ -559,6 +572,7 @@ impl Sampler {
                 tooling_procs.push(p);
             }
         }
+        let tooling_pids: HashSet<i32> = tooling_procs.iter().map(|p| p.pid).collect();
         tooling.procs = tooling_procs.len();
         tooling.rss = tooling_procs.iter().map(|p| p.rss).sum();
         tooling.cpu = round1(tooling_procs.iter().map(|p| p.cpu).sum());
@@ -588,10 +602,7 @@ impl Sampler {
         }
         let mut adopted: HashMap<&str, usize> = HashMap::new();
         for (host, list) in &strays {
-            let estimates: Vec<u64> = list
-                .iter()
-                .map(|(p, _)| procscan::read_rss_owned(&self.roots.proc, p.pid))
-                .collect();
+            let estimates: Vec<u64> = list.iter().map(|(p, _)| self.owned(p.pid)).collect();
             let total: u64 = estimates.iter().sum();
             let movable = units
                 .get(*host)
@@ -629,8 +640,27 @@ impl Sampler {
                 }
             }
         }
+
+        // Processes listed in a Claude section (sessions, left behind, shared
+        // tooling) leave their app, so each process shows once.
+        let claude_pids: HashSet<i32> = in_session
+            .iter()
+            .chain(&orphan_pids)
+            .chain(&tooling_pids)
+            .copied()
+            .collect();
+        let taken: Vec<(&str, u64, f64)> = claude_pids
+            .iter()
+            .filter_map(|pid| Some((owner.get(pid)?.name.as_str(), procs.get(pid)?)))
+            .map(|(unit, p)| (unit, self.owned(p.pid), p.cpu))
+            .collect();
+        let carved = apps::carve(&mut units, taken);
+
         let mut pids_by_id: HashMap<&str, Vec<&Proc>> = HashMap::new();
         for (pid, u) in &owner {
+            if claude_pids.contains(pid) {
+                continue;
+            }
             if let Some(p) = procs.get(pid) {
                 pids_by_id.entry(u.id.as_str()).or_default().push(p);
             }
@@ -645,6 +675,10 @@ impl Sampler {
             e.mem += u.mem.mem;
             e.cpu += u.cpu;
             e.adopted += adopted.get(u.name.as_str()).copied().unwrap_or(0);
+            if let Some(c) = carved.get(&u.name) {
+                e.claude_mem += c.mem;
+                e.claude_cpu += c.cpu;
+            }
             if u.kind == "app" {
                 e.kind = "app".into();
             }
@@ -661,6 +695,7 @@ impl Sampler {
             let mut list = pids_by_id.remove(a.id.as_str()).unwrap_or_default();
             a.procs = list.len();
             a.cpu = round1(a.cpu);
+            a.claude_cpu = round1(a.claude_cpu);
             a.sessions = sessions
                 .iter()
                 .filter(|s| s.app.as_deref() == Some(a.id.as_str()))

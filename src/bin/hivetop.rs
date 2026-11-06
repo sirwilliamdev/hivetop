@@ -124,9 +124,10 @@ fn print_status(snap: &Value) {
     }
     println!("\nApps");
     for a in list(snap, "apps") {
-        let note = match u(a, "sessions") {
-            0 => String::new(),
-            n => format!("  incl. {n} Claude session(s)"),
+        let note = match (u(a, "sessions"), u(a, "claude_mem")) {
+            (0, 0) => String::new(),
+            (0, m) => format!("  + Claude {} listed above", bytes(m)),
+            (n, m) => format!("  + {n} Claude session(s), {} listed above", bytes(m)),
         };
         println!(
             "  {:<36} {:>6.0}% {:>9}{note}",

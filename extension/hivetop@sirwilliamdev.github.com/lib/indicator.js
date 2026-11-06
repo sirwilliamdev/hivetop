@@ -10,11 +10,13 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Client, isCancelled} from './client.js';
 import * as fmt from './format.js';
 import {HistorySection} from './history.js';
-import {AppRow, LineItem, OrphanRow, SessionRow, StackRow, appKey, clearAppCache, systemItem} from './rows.js';
+import {AppRow, BackgroundRow, OrphanRow, SessionRow, StackRow, appKey, clearAppCache, systemItem} from './rows.js';
 import {SectionHeader, ensureVisible, later, syncKeyed} from './widgets.js';
 
 const REFRESH_MS = 2000;
 const PRESSURE_TEXT = ['calm', 'some pressure', 'high pressure'];
+/** Session keys are `<pid>:<start>`, so this never collides with one. */
+const BACKGROUND_KEY = 'background';
 
 /**
  * A collapsible section: a header with totals, and rows matched by key across
@@ -43,10 +45,10 @@ class KeyedSection {
         this.section.actor.visible = false;
     }
 
-    /** `summary` is `{sub, cpu, mem}` for the header. */
-    sync(items, keyOf, create, summary = {}) {
+    /** `summary` is `{sub, cpu, mem}` for the header, plus `count` when it differs from the rows. */
+    sync(items, keyOf, create, {count = items.length, ...summary} = {}) {
         this._last = {items, keyOf, create};
-        this.header.line.set({title: `${this.title} (${items.length})`, ...summary});
+        this.header.line.set({title: `${this.title} (${count})`, ...summary});
         this.header.visible = items.length > 0;
         if (this.header.expanded)
             this._syncRows();
@@ -179,10 +181,9 @@ class HivetopIndicator extends PanelMenu.Button {
         holder.actor.add_child(this._scroll);
         this.menu.addMenuItem(holder);
         const reveal = this._ctx.reveal;
-        this._sessions = new KeyedSection(content, 'Claude sessions', reveal);
+        this._sessions = new KeyedSection(content, 'Claude', reveal);
         this._orphans = new KeyedSection(content, 'Left behind by ended sessions', reveal);
         this._orphans.header.add_style_class_name('hivetop-warn-header');
-        this._background = new KeyedSection(content, 'Background Claude', reveal);
         this._apps = new KeyedSection(content, 'Apps', reveal);
         this._stacks = new KeyedSection(content, 'Docker', reveal);
         this._history = new HistorySection(content, this._ctx);
@@ -194,7 +195,7 @@ class HivetopIndicator extends PanelMenu.Button {
     }
 
     _sections() {
-        return [this._sessions, this._orphans, this._background, this._apps, this._stacks, this._history];
+        return [this._sessions, this._orphans, this._apps, this._stacks, this._history];
     }
 
     _setAvailable(up) {
@@ -309,13 +310,7 @@ class HivetopIndicator extends PanelMenu.Button {
         });
         this._system.line.spark.setData(sys.spark, {span: 600, cpuMax: 100, memMax: 100});
 
-        const interactive = snap.sessions.filter(s => !s.background);
-        const busy = interactive.filter(s => s.status === 'busy').length;
-        this._sessions.sync(interactive, s => s.key, () => new SessionRow(this._ctx), {
-            sub: `${busy} busy, ${interactive.length - busy} idle`,
-            cpu: this._ctx.cpu(sum(interactive, s => s.cpu + s.container_cpu)),
-            mem: fmt.bytes(sum(interactive, s => s.rss + s.container_mem)),
-        });
+        this._renderClaude(snap);
 
         this._orphans.sync(snap.orphans, o => o.session_id, () => new OrphanRow(this._ctx), {
             sub: `${sum(snap.orphans, o => o.procs)} process(es), ${sum(snap.orphans, o => o.containers.length)} container(s) still running`,
@@ -323,6 +318,50 @@ class HivetopIndicator extends PanelMenu.Button {
             mem: fmt.bytes(sum(snap.orphans, o => o.rss)),
         });
 
+        const merged = new Map();
+        for (const a of snap.apps) {
+            const key = appKey(a.id);
+            const m = merged.get(key);
+            if (m) {
+                m.ids.push(a.id);
+                m.mem += a.mem;
+                m.cpu += a.cpu;
+                m.sessions += a.sessions;
+                m.claude_mem += a.claude_mem;
+                m.claude_cpu += a.claude_cpu;
+                m.procs += a.procs;
+                m.adopted += a.adopted;
+                m.processes = [...m.processes, ...a.processes].sort((x, y) => y.rss - x.rss).slice(0, 8);
+            } else {
+                merged.set(key, {key, ids: [a.id], ...a});
+            }
+        }
+        const apps = [...merged.values()];
+        this._apps.sync(apps, a => a.key, () => new AppRow(this._ctx), {
+            sub: 'largest apps by memory, Claude counted above',
+            cpu: this._ctx.cpu(sum(apps, a => a.cpu)),
+            mem: fmt.bytes(sum(apps, a => a.mem)),
+        });
+
+        const stacks = new Map();
+        const loose = snap.containers.filter(x => !x.session && !x.orphan_of);
+        for (const c of loose) {
+            const key = c.project || c.name;
+            if (!stacks.has(key))
+                stacks.set(key, {project: c.project, containers: []});
+            stacks.get(key).containers.push(c);
+        }
+        this._stacks.sync([...stacks.values()], g => g.project || g.containers[0].name, () => new StackRow(this._ctx), {
+            sub: snap.docker_ok ? 'containers not started by a Claude session' : 'Docker not reachable',
+            cpu: this._ctx.cpu(sum(loose, c => c.cpu)),
+            mem: fmt.bytes(sum(loose, c => c.mem)),
+        });
+    }
+
+    /** Interactive sessions, then one Background row for SDK sessions and shared tooling. */
+    _renderClaude(snap) {
+        const interactive = snap.sessions.filter(s => !s.background);
+        const busy = interactive.filter(s => s.status === 'busy').length;
         const background = snap.sessions.filter(s => s.background).map(s => ({
             key: s.key,
             title: s.name,
@@ -344,48 +383,24 @@ class HivetopIndicator extends PanelMenu.Button {
                 cpuValue: snap.tooling.cpu,
             });
         }
-        this._background.sync(background, b => b.key, b => new LineItem({status: b.key !== 'tooling'}), {
-            sub: 'SDK sessions and plugin workers',
-            cpu: this._ctx.cpu(sum(background, b => b.cpuValue)),
-            mem: fmt.bytes(sum(background, b => b.rss)),
-        });
-
-        const merged = new Map();
-        for (const a of snap.apps) {
-            const key = appKey(a.id);
-            const m = merged.get(key);
-            if (m) {
-                m.ids.push(a.id);
-                m.mem += a.mem;
-                m.cpu += a.cpu;
-                m.sessions += a.sessions;
-                m.procs += a.procs;
-                m.adopted += a.adopted;
-                m.processes = [...m.processes, ...a.processes].sort((x, y) => y.rss - x.rss).slice(0, 8);
-            } else {
-                merged.set(key, {key, ids: [a.id], ...a});
-            }
-        }
-        const apps = [...merged.values()];
-        this._apps.sync(apps, a => a.key, () => new AppRow(this._ctx), {
-            sub: 'largest apps by memory, Claude sessions included',
-            cpu: this._ctx.cpu(sum(apps, a => a.cpu)),
-            mem: fmt.bytes(sum(apps, a => a.mem)),
-        });
-
-        const stacks = new Map();
-        const loose = snap.containers.filter(x => !x.session && !x.orphan_of);
-        for (const c of loose) {
-            const key = c.project || c.name;
-            if (!stacks.has(key))
-                stacks.set(key, {project: c.project, containers: []});
-            stacks.get(key).containers.push(c);
-        }
-        this._stacks.sync([...stacks.values()], g => g.project || g.containers[0].name, () => new StackRow(this._ctx), {
-            sub: snap.docker_ok ? 'containers not started by a Claude session' : 'Docker not reachable',
-            cpu: this._ctx.cpu(sum(loose, c => c.cpu)),
-            mem: fmt.bytes(sum(loose, c => c.mem)),
-        });
+        const bg = {
+            key: BACKGROUND_KEY,
+            items: background,
+            rss: sum(background, b => b.rss),
+            cpu: sum(background, b => b.cpuValue),
+        };
+        const rows = background.length > 0 ? [...interactive, bg] : interactive;
+        const nbg = snap.sessions.length - interactive.length;
+        const sub = [`${busy} busy`, `${interactive.length - busy} idle`];
+        if (nbg)
+            sub.push(`${nbg} background`);
+        this._sessions.sync(rows, r => r.key,
+            r => r.key === BACKGROUND_KEY ? new BackgroundRow(this._ctx) : new SessionRow(this._ctx), {
+                count: snap.sessions.length,
+                sub: sub.join(', '),
+                cpu: this._ctx.cpu(sum(interactive, s => s.cpu + s.container_cpu) + bg.cpu),
+                mem: fmt.bytes(sum(interactive, s => s.rss + s.container_mem) + bg.rss),
+            });
     }
 
     destroy() {

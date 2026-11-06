@@ -8,16 +8,20 @@ session**, by **app** and by **container**. A plain process list would not.
 Top bar:   🐝 cpu 12%  ram 65%        (the bee turns yellow or red under CPU/memory/IO pressure)
 
 Menu:      System: 12 cores, calm                      ~~~    12%    65%
-           > Claude sessions (6)   2 busy, 4 idle             3.4%  3.5 GB
+           > Claude (8)   2 busy, 4 idle, 2 background        3.7%  3.8 GB
+               > acme-api-50   busy  npm test                 2.1%  1.2 GB
+                 ...
+               > Background (3)   SDK sessions and plugin workers  0.3%  341 MB
            > Left behind by ended sessions (1)                  0%   19 MB
-           > Background Claude (2)                            0.3%  341 MB
-           > Apps (12)                                         10%   12 GB
+           > Apps (12)                                          7%  8.5 GB
            > Docker (1)                                       0.2%   65 MB
            > History   last 24h: average CPU and RAM           11%  9.8 GB
 ```
 
 Sections start collapsed every time the menu opens; click a header to expand
-it. Expanding a session shows its processes (MCP servers dimmed as
+it. The Claude section lists interactive sessions first and ends with a
+Background row: SDK sessions (entrypoint `sdk-cli`, such as plugin observers)
+and Claude tooling running outside any session. Expanding a session shows its processes (MCP servers dimmed as
 infrastructure), the containers it started, and the actions **Go to <app>**
 (raises the VSCodium or terminal window that hosts the session), **Scratchpad**
 (opens the session's scratchpad folder), **Copy details** and **Kill session**.
@@ -54,7 +58,10 @@ nothing measurable while it is closed.
 - **Apps**: the systemd scopes GNOME creates for each launched app
   (`app-gnome-codium-1234.scope`), read from cgroup v2 files, cheap and
   children included. Memory leaves out reclaimable page cache, like the
-  system "used" figure. Two GNOME quirks are corrected:
+  system "used" figure. Processes listed in a Claude section (sessions,
+  background, left behind) are taken out of their app, so each process is
+  counted once: their RssAnon + RssShmem and CPU leave the app's figures, and
+  the app row says how much Claude it hosts. Two GNOME quirks are corrected:
   - GNOME moves an app into its scope only after spawning it, so whatever a
     browser forks in between stays in GNOME Shell's cgroup. That made Brave's
     renderers look like 4 GB of "GNOME Shell". Such processes are credited to
@@ -70,9 +77,9 @@ nothing measurable while it is closed.
   after their session ended. The daemon remembers which session started what
   in memory only, so sessions that ended before it started are not tracked.
 - **History**: per-minute average and peak for the system, every session, the
-  top 5 apps and every container. Rows are merged into 10-minute rows after 7
-  days and deleted after 30 days. Stored in `~/.local/share/hivetop/history.db`
-  (about 10 MB).
+  top 5 apps (their own usage, Claude left out) and every container. Rows
+  are merged into 10-minute rows after 7 days and deleted after 30 days.
+  Stored in `~/.local/share/hivetop/history.db` (about 10 MB).
 
 ## Requirements
 

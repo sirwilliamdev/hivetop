@@ -103,7 +103,11 @@ pub struct AppView {
     pub mem: u64,
     pub cpu: f64,
     pub sessions: usize,
-    /// Processes owned by this app.
+    /// Usage of the Claude processes this app hosts, already left out of
+    /// `mem` and `cpu` because the Claude sections list them.
+    pub claude_mem: u64,
+    pub claude_cpu: f64,
+    /// Processes owned by this app, Claude ones excluded.
     pub procs: usize,
     /// Of those, processes found in another unit's cgroup (GNOME launch race, portal scopes).
     pub adopted: usize,
