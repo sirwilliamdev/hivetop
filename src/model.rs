@@ -63,6 +63,7 @@ pub struct SessionView {
     pub started_at: u64,
     pub app: Option<String>,
     pub procs: usize,
+    /// RssAnon + RssShmem summed over the session's processes.
     pub rss: u64,
     pub cpu: f64,
     pub activity: Option<String>,

@@ -7,7 +7,7 @@ interval_idle_ms = 5000
 
 [notify]
 enabled = true
-session_rss_mb = 4096      # warn when one Claude session uses more RAM than this
+session_rss_mb = 4096      # warn when one Claude session uses more RAM than this (private memory: RssAnon + RssShmem)
 session_cpu_pct = 300.0    # ... or more CPU than this (100 = one full core)
 session_cpu_secs = 60      # ... continuously for at least this long
 psi_memory_some = 20.0     # warn on memory pressure (PSI "some" avg10, percent)

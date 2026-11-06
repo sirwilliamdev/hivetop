@@ -216,13 +216,22 @@ impl Sampler {
         }
     }
 
-    /// Memory a process holds for itself: RssAnon + RssShmem.
+    /// Memory a process holds for itself: RssAnon + RssShmem. Plain RSS also
+    /// counts shared file pages (binaries, libraries) once per process, so
+    /// summing it over many `claude` processes overstates their use.
     fn owned(&mut self, pid: i32) -> u64 {
         let proc_root = &self.roots.proc;
         *self
             .owned
             .entry(pid)
             .or_insert_with(|| procscan::read_rss_owned(proc_root, pid))
+    }
+
+    /// A process line for a Claude section, with memory as [`Self::owned`].
+    fn claude_proc_view(&mut self, p: &Proc, infra: bool) -> ProcView {
+        let mut v = self.proc_view(p, infra);
+        v.rss = self.owned(p.pid);
+        v
     }
 
     fn is_tooling(&mut self, p: &Proc) -> bool {
@@ -395,12 +404,7 @@ impl Sampler {
             let app = owner.get(&root).map(|u| u.id.clone());
             let scratchpad =
                 self.scratchpad(&key, meta.map(|m| m.session_id.as_str()).unwrap_or(""));
-            let rss = p.rss
-                + members
-                    .iter()
-                    .filter_map(|m| procs.get(m))
-                    .map(|m| m.rss)
-                    .sum::<u64>();
+            let rss = self.owned(root) + members.iter().map(|&m| self.owned(m)).sum::<u64>();
             let cpu = p.cpu
                 + members
                     .iter()
@@ -412,9 +416,9 @@ impl Sampler {
                 let mut list: Vec<&Proc> = std::iter::once(p)
                     .chain(members.iter().filter_map(|m| procs.get(m)))
                     .collect();
-                list.sort_by_key(|p| std::cmp::Reverse(p.rss));
+                list.sort_by_cached_key(|p| std::cmp::Reverse(self.owned(p.pid)));
                 for q in list.into_iter().take(MAX_SESSION_PROCS) {
-                    let v = self.proc_view(q, infra.contains(&q.pid));
+                    let v = self.claude_proc_view(q, infra.contains(&q.pid));
                     processes.push(v);
                 }
             }
@@ -531,9 +535,9 @@ impl Sampler {
             let mut processes = Vec::new();
             if detail {
                 let mut sorted = list.clone();
-                sorted.sort_by_key(|p| std::cmp::Reverse(p.rss));
+                sorted.sort_by_cached_key(|p| std::cmp::Reverse(self.owned(p.pid)));
                 for q in sorted.into_iter().take(MAX_SESSION_PROCS) {
-                    let v = self.proc_view(q, false);
+                    let v = self.claude_proc_view(q, false);
                     processes.push(v);
                 }
             }
@@ -554,7 +558,7 @@ impl Sampler {
                 cwd: origin.cwd,
                 ended_at: origin.ended_at,
                 procs: list.len(),
-                rss: list.iter().map(|p| p.rss).sum(),
+                rss: list.iter().map(|p| self.owned(p.pid)).sum(),
                 cpu: round1(list.iter().map(|p| p.cpu).sum()),
                 containers: g.containers,
                 processes,
@@ -574,12 +578,12 @@ impl Sampler {
         }
         let tooling_pids: HashSet<i32> = tooling_procs.iter().map(|p| p.pid).collect();
         tooling.procs = tooling_procs.len();
-        tooling.rss = tooling_procs.iter().map(|p| p.rss).sum();
+        tooling.rss = tooling_procs.iter().map(|p| self.owned(p.pid)).sum();
         tooling.cpu = round1(tooling_procs.iter().map(|p| p.cpu).sum());
         if detail {
-            tooling_procs.sort_by_key(|p| std::cmp::Reverse(p.rss));
+            tooling_procs.sort_by_cached_key(|p| std::cmp::Reverse(self.owned(p.pid)));
             for q in tooling_procs.into_iter().take(MAX_SESSION_PROCS) {
-                let v = self.proc_view(q, false);
+                let v = self.claude_proc_view(q, false);
                 tooling.processes.push(v);
             }
         }

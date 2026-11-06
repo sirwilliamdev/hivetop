@@ -55,6 +55,9 @@ nothing measurable while it is closed.
   after its working directory. Children started in the first 10 s are counted
   as infrastructure (MCP servers, plugins). The "now running" text is the
   newest other child, with the Bash tool wrapper stripped to the real command.
+  Memory is RssAnon + RssShmem per process: plain RSS counts shared pages
+  (the `claude` binary, libraries) once per process and overstates a group
+  of them.
 - **Apps**: the systemd scopes GNOME creates for each launched app
   (`app-gnome-codium-1234.scope`), read from cgroup v2 files, cheap and
   children included. Memory leaves out reclaimable page cache, like the
