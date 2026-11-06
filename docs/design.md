@@ -55,9 +55,11 @@ nothing measurable while it is closed.
   after its working directory. Children started in the first 10 s are counted
   as infrastructure (MCP servers, plugins). The "now running" text is the
   newest other child, with the Bash tool wrapper stripped to the real command.
-  Memory is RssAnon + RssShmem per process: plain RSS counts shared pages
-  (the `claude` binary, libraries) once per process and overstates a group
-  of them.
+  A background command whose shell exits gets reparented to `systemd --user`
+  and leaves the tree; it stays in its session as "detached", so a dev server
+  started by Claude is counted, and killed, with the session. Memory is
+  RssAnon + RssShmem per process: plain RSS counts shared pages (the `claude`
+  binary, libraries) once per process and overstates a group of them.
 - **Apps**: the systemd scopes GNOME creates for each launched app
   (`app-gnome-codium-1234.scope`), read from cgroup v2 files, cheap and
   children included. Memory leaves out reclaimable page cache, like the
@@ -77,8 +79,10 @@ nothing measurable while it is closed.
   directory is its compose `working_dir` or lies inside it (addon repos,
   worktrees).
 - **Orphans**: processes and `docker compose run` containers still running 10 s
-  after their session ended. The daemon remembers which session started what
-  in memory only, so sessions that ended before it started are not tracked.
+  after their session ended. Which session started what is saved to
+  `$XDG_RUNTIME_DIR/hivetop/tracker.json`, so it survives a daemon restart
+  (not a logout). Processes that left their session before the daemon first
+  saw them cannot be attributed.
 - **History**: per-minute average and peak for the system, every session, the
   top 5 apps (their own usage, Claude left out) and every container. Rows
   are merged into 10-minute rows after 7 days and deleted after 30 days.

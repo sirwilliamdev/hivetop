@@ -131,6 +131,16 @@ pub fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share").join("hivetop")
 }
 
+/// Per-login state: `$XDG_RUNTIME_DIR/hivetop`, cleared at logout and reboot,
+/// when process ids stop meaning the same processes.
+pub fn runtime_dir(uid: u32) -> PathBuf {
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from(format!("/run/user/{uid}")),
+    }
+    .join("hivetop")
+}
+
 fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
     match std::env::var_os(var) {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),

@@ -30,7 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let roots = Roots::from_env();
     let history_path = config::data_dir().join("history.db");
-    let mut sampler = Sampler::new(roots.clone(), config::config_path(), history_path.clone());
+    let mut sampler = Sampler::new(roots.clone(), config::config_path(), history_path.clone())
+        .with_tracker_state(config::runtime_dir(roots.uid).join("tracker.json"));
     let shared = Arc::new(Mutex::new(Shared::default()));
     let (tx, rx) = mpsc::channel();
     let service = Service::new(

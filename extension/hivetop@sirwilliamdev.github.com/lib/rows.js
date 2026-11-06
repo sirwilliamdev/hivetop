@@ -95,7 +95,7 @@ function sessionDetails(s) {
         `running: ${s.activity ?? '-'}`,
         s.scratchpad ? `scratchpad: ${s.scratchpad}` : null,
         `cpu: ${fmt.pct(s.cpu)} of one core`,
-        `memory: ${fmt.bytes(s.rss)} in ${s.procs} processes`,
+        `memory: ${fmt.bytes(s.rss)} in ${s.procs} processes${s.detached ? ` (${s.detached} detached)` : ''}`,
         s.containers.length
             ? `containers: ${s.containers.length}, cpu ${fmt.pct(s.container_cpu)} of one core, memory ${fmt.bytes(s.container_mem)}`
             : null,
@@ -127,6 +127,8 @@ class HivetopSessionRow extends ExpandableRow {
     renderLine() {
         const s = this.data;
         let sub = s.activity ?? `${s.status} in ${fmt.homeShort(s.cwd, this._ctx.home)}`;
+        if (s.detached)
+            sub += `  + ${s.detached} detached`;
         if (s.containers.length)
             sub += `  + ${s.containers.length} container(s) ${fmt.bytes(s.container_mem)}`;
         this.line.set({title: s.name, sub, cpu: this._ctx.cpu(s.cpu), mem: fmt.bytes(s.rss)});

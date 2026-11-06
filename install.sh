@@ -19,6 +19,7 @@ uninstall() {
     gnome-extensions disable "$UUID" 2>/dev/null || true
     systemctl --user disable --now hivetopd.service 2>/dev/null || true
     rm -f "$BIN_DIR/hivetopd" "$BIN_DIR/hivetop" "$UNIT_DIR/hivetopd.service" "$DBUS_FILE"
+    rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hivetop"
     rm -rf "$EXT_DIR"
     systemctl --user daemon-reload
     if [[ "${1:-}" == "--purge" ]]; then

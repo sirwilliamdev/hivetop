@@ -92,6 +92,8 @@ pub struct Sampler {
     scratchpads: HashMap<String, (Option<String>, Instant)>,
     session_cwds: HashMap<String, String>,
     orphans: OrphanTracker,
+    tracker_path: Option<PathBuf>,
+    tracker_saved: String,
     /// RssAnon + RssShmem by PID, read at most once per tick.
     owned: HashMap<i32, u64>,
     prev_cpu: Option<system::CpuTimes>,
@@ -123,6 +125,8 @@ impl Sampler {
             scratchpads: HashMap::new(),
             session_cwds: HashMap::new(),
             orphans: OrphanTracker::default(),
+            tracker_path: None,
+            tracker_saved: String::new(),
             owned: HashMap::new(),
             prev_cpu: None,
             last_tick: None,
@@ -133,6 +137,35 @@ impl Sampler {
         };
         s.sync_history();
         s
+    }
+
+    /// Keeps the orphan tracker in `path` across restarts, starting from what
+    /// is already saved there.
+    pub fn with_tracker_state(mut self, path: PathBuf) -> Self {
+        self.orphans = OrphanTracker::load(&path);
+        self.tracker_saved = self.orphans.to_json();
+        self.tracker_path = Some(path);
+        self
+    }
+
+    fn save_tracker(&mut self) {
+        let Some(path) = &self.tracker_path else {
+            return;
+        };
+        let json = self.orphans.to_json();
+        if json == self.tracker_saved {
+            return;
+        }
+        let tmp = path.with_extension("tmp");
+        let written = path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|_| fs::write(&tmp, &json))
+            .and_then(|_| fs::rename(&tmp, path));
+        match written {
+            Ok(()) => self.tracker_saved = json,
+            Err(e) => eprintln!("hivetopd: cannot save {}: {e}", path.display()),
+        }
     }
 
     pub fn interval(&self, active: bool) -> Duration {
@@ -359,11 +392,18 @@ impl Sampler {
         let mut sessions: Vec<SessionView> = Vec::new();
         let mut members_by_key: HashMap<String, Vec<i32>> = HashMap::new();
         let mut in_session: HashSet<i32> = HashSet::new();
-        for root in claude::find_roots(&procs, &metas) {
+        let roots = claude::find_roots(&procs, &metas);
+        let root_set: HashSet<i32> = roots.iter().copied().collect();
+        for root in roots {
             let p = &procs[&root];
             let key = format!("{}:{}", p.pid, p.start);
             let meta = metas.get(&root).filter(|m| m.matches(p));
-            let members = procscan::descendants(root, &children);
+            let mut members = procscan::descendants(root, &children);
+            let tree: HashSet<i32> = members.iter().copied().chain([root]).collect();
+            let mut detached = self.orphans.detached(&key, &tree, &procs, &children);
+            detached.retain(|pid| !root_set.contains(pid));
+            let detached_count = detached.len();
+            members.extend(detached);
             let mut infra: HashSet<i32> = HashSet::new();
             let infra_limit = p.start + INFRA_WINDOW_SECS * clk;
             for &c in children.get(&root).into_iter().flatten() {
@@ -451,6 +491,7 @@ impl Sampler {
                     .unwrap_or(btime + p.start / clk),
                 app,
                 procs: members.len() + 1,
+                detached: detached_count,
                 rss,
                 cpu: round1(cpu),
                 activity,
@@ -525,6 +566,7 @@ impl Sampler {
             .update(ts, &live, &live_containers, &procs, &children);
         drop(live);
         drop(live_containers);
+        self.save_tracker();
         let mut orphans = Vec::new();
         let mut orphan_pids: HashSet<i32> = HashSet::new();
         let mut targets = KillTargets::default();

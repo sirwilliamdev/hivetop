@@ -63,6 +63,9 @@ pub struct SessionView {
     pub started_at: u64,
     pub app: Option<String>,
     pub procs: usize,
+    /// Of `procs`, processes that left the session's tree but still belong to
+    /// it (background commands now parented by `systemd --user`).
+    pub detached: usize,
     /// RssAnon + RssShmem summed over the session's processes.
     pub rss: u64,
     pub cpu: f64,
