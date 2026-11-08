@@ -1,7 +1,7 @@
 {
   "uuid": "hivetop@sirwilliamdev.github.com",
   "name": "hivetop",
-  "description": "Top-bar resource monitor that groups usage by Claude Code session, app and container. Needs the hivetopd daemon from the same repository.",
+  "description": "Top-bar resource monitor that groups usage by AI agent session (Claude Code today), app and container. Needs the hivetopd daemon from the same repository.",
   "shell-version": ["45", "46", "47", "48", "49"],
   "settings-schema": "org.gnome.shell.extensions.hivetop",
   "url": "https://github.com/sirwilliamdev/hivetop",

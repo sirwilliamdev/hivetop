@@ -14,7 +14,7 @@ interval_idle_ms = 5000
 
 [notify]
 enabled = true
-session_rss_mb = 4096      # warn when one Claude session uses more RAM than this
+session_rss_mb = 4096      # warn when one AI agent session uses more RAM than this
 session_cpu_pct = 300.0    # ... or more CPU than this (100 = one core)
 session_cpu_secs = 60      # ... for at least this long
 psi_memory_some = 20.0     # warn on memory pressure (PSI some avg10, percent)
@@ -32,6 +32,11 @@ top_apps = 5
 enabled = true
 # socket = "/var/run/docker.sock"
 refresh_secs = 30
+
+[agents.claude]
+enabled = true
+# config_dir = "~/.claude"      # default: $CLAUDE_CONFIG_DIR or ~/.claude
+# tmp_dir = "/tmp/claude-1000"  # default: /tmp/claude-<uid>
 `;
 
 function configFile() {
@@ -72,6 +77,15 @@ export default class HivetopPreferences extends ExtensionPreferences {
         settings.bind('panel-index', index, 'value', Gio.SettingsBindFlags.DEFAULT);
         bar.add(index);
         page.add(bar);
+
+        const alerts = new Adw.PreferencesGroup({title: 'Notifications'});
+        const waiting = new Adw.SwitchRow({
+            title: 'When an AI agent needs you',
+            subtitle: 'Once per wait: a permission dialog, a question, a blocked background job. Click it to go to the agent',
+        });
+        settings.bind('notify-waiting', waiting, 'active', Gio.SettingsBindFlags.DEFAULT);
+        alerts.add(waiting);
+        page.add(alerts);
 
         const daemon = new Adw.PreferencesGroup({
             title: 'Daemon',

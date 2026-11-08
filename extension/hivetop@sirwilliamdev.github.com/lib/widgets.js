@@ -84,9 +84,14 @@ export function confirmButton(label, onConfirm, extraClass = '') {
     return b;
 }
 
-/** `[status dot] [icon] [title / subtitle] [sparkline] [cpu] [mem]` */
+const SUB2_VARIANTS = ['cmd', 'wait', 'out'];
+
+/**
+ * `[status dot] [icon] [title chip / subtitle / second subtitle] [sparkline] [cpu] [mem]`
+ * The chip and the second subtitle show only when set.
+ */
 export class StatLine {
-    constructor({spark = false, icon = false, status = false} = {}) {
+    constructor({spark = false, icon = false, status = false, sub2 = false} = {}) {
         this.actor = new St.BoxLayout({style_class: 'hivetop-line', x_expand: true});
         if (status) {
             this.dot = new St.Widget({style_class: 'hivetop-status', y_align: CENTER});
@@ -97,10 +102,19 @@ export class StatLine {
             this.actor.add_child(this.iconBin);
         }
         const text = vbox({x_expand: true, y_align: CENTER});
+        const titleRow = new St.BoxLayout();
         this.title = ellipsized('hivetop-title');
+        this.chip = new St.Label({style_class: 'hivetop-chip', y_align: CENTER, visible: false});
+        titleRow.add_child(this.title);
+        titleRow.add_child(this.chip);
         this.sub = ellipsized('hivetop-sub');
-        text.add_child(this.title);
+        text.add_child(titleRow);
         text.add_child(this.sub);
+        if (sub2) {
+            this.sub2 = ellipsized('hivetop-sub hivetop-sub2');
+            this.sub2.visible = false;
+            text.add_child(this.sub2);
+        }
         this.actor.add_child(text);
         if (spark) {
             this.spark = new Sparkline();
@@ -113,20 +127,74 @@ export class StatLine {
         this.actor.add_child(this.memBin);
     }
 
-    set({title = '', sub = '', cpu = '', mem = ''}) {
+    set({title = '', sub = '', cpu = '', mem = '', chip = ''}) {
         this.title.text = title;
         this.sub.text = sub;
         this.sub.visible = sub !== '';
+        this.chip.text = chip;
+        this.chip.visible = chip !== '';
         this.cpu.text = cpu;
         this.mem.text = mem;
+    }
+
+    /** `variant` is `cmd` (a command), `wait` (why an agent waits) or `out` (what it produced). */
+    setSub2(text = '', variant = 'out') {
+        if (!this.sub2)
+            return;
+        this.sub2.text = text;
+        this.sub2.visible = text !== '';
+        for (const v of SUB2_VARIANTS) {
+            if (v === variant)
+                this.sub2.add_style_class_name(`hivetop-sub2-${v}`);
+            else
+                this.sub2.remove_style_class_name(`hivetop-sub2-${v}`);
+        }
     }
 
     setStatus(status) {
         if (!this.dot)
             return;
-        for (const s of ['busy', 'idle', 'orphan'])
+        for (const s of ['busy', 'idle', 'wait', 'orphan'])
             this.dot.remove_style_class_name(`hivetop-status-${s}`);
         this.dot.add_style_class_name(`hivetop-status-${status}`);
+    }
+}
+
+/** Two toggle buttons; `onSelect(name)` runs when the selection changes. */
+export class TabBar {
+    constructor(names, onSelect) {
+        this.item = plainItem('hivetop-tabs-item');
+        const box = new St.BoxLayout({style_class: 'hivetop-tabs', x_expand: true});
+        this._buttons = new Map();
+        for (const [name, label] of names) {
+            const b = new St.Button({
+                label,
+                style_class: 'hivetop-tab',
+                toggle_mode: true,
+                can_focus: true,
+                x_expand: true,
+            });
+            b.connect('clicked', () => this.select(name, true));
+            this._buttons.set(name, b);
+            box.add_child(b);
+        }
+        this.item.add_child(box);
+        this._onSelect = onSelect;
+        this.current = names[0][0];
+        this._sync();
+    }
+
+    select(name, notify = false) {
+        const changed = name !== this.current;
+        this.current = name;
+        this._sync();
+        if (changed && notify)
+            this._onSelect(name);
+    }
+
+    _sync() {
+        for (const [name, b] of this._buttons)
+            b.checked = name === this.current;
     }
 }
 

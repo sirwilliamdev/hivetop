@@ -6,10 +6,10 @@ import {isCancelled} from './client.js';
 import * as fmt from './format.js';
 import {LineItem, appName} from './rows.js';
 import {Sparkline} from './sparkline.js';
-import {SectionHeader, ellipsized, later, plainItem, syncKeyed, vbox} from './widgets.js';
+import {ellipsized, plainItem, syncKeyed, vbox} from './widgets.js';
 
 const RANGES = ['1h', '24h', '7d', '30d'];
-const KIND_LABEL = {session: 'Claude session', app: 'App', container: 'Container'};
+const KIND_LABEL = {session: 'AI agent', app: 'App', container: 'Container'};
 
 function avg(points, idx) {
     return points.reduce((n, p) => n + p[idx], 0) / points.length;
@@ -20,30 +20,19 @@ function peak(points, idx) {
 }
 
 /**
- * Collapsible history section inside the menu's scroll view, so the menu
- * scrolls it like every other section. Data is fetched each time the section
- * expands or the range changes; rows are reused across loads.
+ * The History tab: a range picker, the system chart and the top consumers.
+ * Data is fetched each time the tab opens or the range changes; rows are
+ * reused across loads.
  */
-export class HistorySection {
-    constructor(menu, ctx) {
+export class HistoryPane {
+    constructor(section, ctx) {
         this._ctx = ctx;
         this._range = '24h';
         this._buttons = new Map();
         this._rankItems = new Map();
         this._seq = 0;
-
-        this.header = new SectionHeader(expanded => {
-            this.section.actor.visible = expanded;
-            if (expanded) {
-                this._reveal();
-                this._load();
-            }
-        });
-        this.header.line.set({title: 'History', sub: 'CPU and RAM over time, top consumers'});
-        this.section = new PopupMenu.PopupMenuSection();
-        menu.addMenuItem(this.header);
-        menu.addMenuItem(this.section);
-        this.section.actor.visible = false;
+        this._active = false;
+        this.section = section;
 
         const ranges = new St.BoxLayout({style_class: 'hivetop-action-box'});
         for (const r of RANGES) {
@@ -72,13 +61,14 @@ export class HistorySection {
         this._syncButtons();
     }
 
-    collapse() {
-        this.header.setExpanded(false);
-        this.section.actor.visible = false;
+    activate() {
+        this._active = true;
+        this._load();
     }
 
-    _reveal() {
-        later(this.header, 50, () => this._ctx.reveal(this.header, this.section.actor));
+    deactivate() {
+        this._active = false;
+        this._seq++;
     }
 
     _select(range) {
@@ -103,14 +93,13 @@ export class HistorySection {
                 this._legend.text = 'History unavailable: is hivetopd running?';
             return;
         }
-        if (seq !== this._seq || !this.header.expanded)
+        if (seq !== this._seq || !this._active)
             return;
         if (h.error) {
             this._legend.text = `History unavailable: ${h.error}`;
             return;
         }
         this._render(h);
-        this._reveal();
     }
 
     _render(h) {
@@ -123,16 +112,9 @@ export class HistorySection {
         });
         if (pts.length === 0) {
             this._legend.text = 'No data yet: history is written once a minute.';
-            this.header.line.set({title: 'History', sub: `last ${this._range}: no data yet`});
         } else {
             this._legend.text = `CPU (blue) avg ${fmt.pct(avg(pts, 1))}, peak ${fmt.pct(peak(pts, 2))}   ` +
                 `RAM (orange) avg ${fmt.bytes(avg(pts, 3))}, peak ${fmt.bytes(peak(pts, 4))}`;
-            this.header.line.set({
-                title: 'History',
-                sub: `last ${this._range}: average CPU and RAM`,
-                cpu: fmt.pct(avg(pts, 1)),
-                mem: fmt.bytes(avg(pts, 3)),
-            });
         }
         syncKeyed(this._ranking, this._rankItems, h.ranking, r => `${r.kind}:${r.key}`, () => {
             const item = new LineItem();
@@ -143,7 +125,8 @@ export class HistorySection {
         for (const r of h.ranking) {
             this._rankItems.get(`${r.kind}:${r.key}`).update({
                 title: r.kind === 'app' ? appName(r.label) : r.label,
-                sub: `${KIND_LABEL[r.kind] ?? r.kind}, active ${fmt.ago(r.minutes * 60)}`,
+                sub: `${KIND_LABEL[r.kind] ?? r.kind}, active ${fmt.ago(r.minutes * 60)}` +
+                    (r.tokens ? `, ${fmt.tokens(r.tokens)} tokens` : ''),
                 cpu: `${this._ctx.cpu(r.cpu_avg)} / ${this._ctx.cpu(r.cpu_max)}`,
                 mem: `${fmt.bytes(r.mem_avg)} / ${fmt.bytes(r.mem_max)}`,
             });

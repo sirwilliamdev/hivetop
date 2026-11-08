@@ -9,14 +9,20 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {Client, isCancelled} from './client.js';
 import * as fmt from './format.js';
-import {HistorySection} from './history.js';
-import {AppRow, BackgroundRow, OrphanRow, SessionRow, StackRow, appKey, clearAppCache, systemItem} from './rows.js';
-import {SectionHeader, ensureVisible, later, syncKeyed} from './widgets.js';
+import {HistoryPane} from './history.js';
+import {WaitNotifier} from './notify.js';
+import {
+    AgentRow, AppRow, BackgroundRow, OrphanRow, StackRow, appKey, clearAppCache, providerLabel, systemItem,
+} from './rows.js';
+import {SectionHeader, TabBar, ensureVisible, later, syncKeyed} from './widgets.js';
 
 const REFRESH_MS = 2000;
 const PRESSURE_TEXT = ['calm', 'some pressure', 'high pressure'];
-/** Session keys are `<pid>:<start>`, so this never collides with one. */
+/** Agent keys are `<pid>:<start>`, so these never collide with one. */
 const BACKGROUND_KEY = 'background';
+const ORPHAN_PREFIX = 'orphan:';
+/** Agents needing a person first, then working ones, then idle ones. */
+const STATE_ORDER = {waiting: 0, busy: 1, idle: 2};
 
 /**
  * A collapsible section: a header with totals, and rows matched by key across
@@ -71,6 +77,12 @@ class KeyedSection {
         this._closeRows();
         this.section.actor.visible = false;
     }
+
+    expand() {
+        this.header.setExpanded(true);
+        this.section.actor.visible = true;
+        this._syncRows();
+    }
 }
 
 function metric(key) {
@@ -114,6 +126,7 @@ class HivetopIndicator extends PanelMenu.Button {
             onSummary: s => this._setSummary(s),
             onAvailability: up => this._setAvailable(up),
         });
+        this._waits = new WaitNotifier(settings, this._client);
         this._ctx = {
             home: GLib.get_home_dir(),
             client: this._client,
@@ -163,6 +176,8 @@ class HivetopIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._offline);
         this._system = systemItem();
         this.menu.addMenuItem(this._system);
+        this._tabs = new TabBar([['now', 'Now'], ['history', 'History']], tab => this._showTab(tab));
+        this.menu.addMenuItem(this._tabs.item);
         // Sections scroll inside a capped view: a top-level menu taller than the
         // screen makes GNOME squeeze expanded submenus to zero height.
         const content = new PopupMenu.PopupMenuSection();
@@ -181,12 +196,15 @@ class HivetopIndicator extends PanelMenu.Button {
         holder.actor.add_child(this._scroll);
         this.menu.addMenuItem(holder);
         const reveal = this._ctx.reveal;
-        this._sessions = new KeyedSection(content, 'Claude', reveal);
-        this._orphans = new KeyedSection(content, 'Left behind by ended sessions', reveal);
-        this._orphans.header.add_style_class_name('hivetop-warn-header');
-        this._apps = new KeyedSection(content, 'Apps', reveal);
-        this._stacks = new KeyedSection(content, 'Docker', reveal);
-        this._history = new HistorySection(content, this._ctx);
+        this._now = new PopupMenu.PopupMenuSection();
+        this._past = new PopupMenu.PopupMenuSection();
+        content.addMenuItem(this._now);
+        content.addMenuItem(this._past);
+        this._agents = new KeyedSection(this._now, 'AI Agents', reveal);
+        this._apps = new KeyedSection(this._now, 'Apps', reveal);
+        this._stacks = new KeyedSection(this._now, 'Docker', reveal);
+        this._history = new HistoryPane(this._past, this._ctx);
+        this._past.actor.visible = false;
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         const prefs = new PopupMenu.PopupMenuItem('Settings');
         prefs.connect('activate', () => this._extension.openPreferences());
@@ -195,7 +213,22 @@ class HivetopIndicator extends PanelMenu.Button {
     }
 
     _sections() {
-        return [this._sessions, this._orphans, this._apps, this._stacks, this._history];
+        return [this._agents, this._apps, this._stacks];
+    }
+
+    _showTab(tab) {
+        const now = tab === 'now';
+        this._now.actor.visible = now;
+        this._past.actor.visible = !now;
+        (this._scroll.vadjustment ?? this._scroll.vscroll?.adjustment)?.set_value(0);
+        if (now) {
+            this._history.deactivate();
+            this._refresh();
+        } else {
+            for (const section of this._sections())
+                section._closeRows();
+            this._history.activate();
+        }
     }
 
     _setAvailable(up) {
@@ -213,6 +246,7 @@ class HivetopIndicator extends PanelMenu.Button {
 
     _setSummary(summary) {
         this._summary = summary;
+        this._waits?.update(summary.waiting);
         this._available = true;
         this._syncOffline();
         this._renderLabel();
@@ -240,6 +274,12 @@ class HivetopIndicator extends PanelMenu.Button {
         this._stopTimer();
         for (const section of this._sections())
             section.collapse();
+        this._tabs.select('now');
+        this._now.actor.visible = true;
+        this._past.actor.visible = false;
+        this._history.deactivate();
+        if (open)
+            this._agents.expand();
         if (!open) {
             this._client.setActive(false).catch(() => {});
             return;
@@ -264,7 +304,7 @@ class HivetopIndicator extends PanelMenu.Button {
     }
 
     async _refresh() {
-        if (this._busy)
+        if (this._busy || this._tabs.current !== 'now')
             return;
         this._busy = true;
         try {
@@ -310,13 +350,7 @@ class HivetopIndicator extends PanelMenu.Button {
         });
         this._system.line.spark.setData(sys.spark, {span: 600, cpuMax: 100, memMax: 100});
 
-        this._renderClaude(snap);
-
-        this._orphans.sync(snap.orphans, o => o.session_id, () => new OrphanRow(this._ctx), {
-            sub: `${sum(snap.orphans, o => o.procs)} process(es), ${sum(snap.orphans, o => o.containers.length)} container(s) still running`,
-            cpu: this._ctx.cpu(sum(snap.orphans, o => o.cpu)),
-            mem: fmt.bytes(sum(snap.orphans, o => o.rss)),
-        });
+        this._renderAgents(snap);
 
         const merged = new Map();
         for (const a of snap.apps) {
@@ -326,9 +360,9 @@ class HivetopIndicator extends PanelMenu.Button {
                 m.ids.push(a.id);
                 m.mem += a.mem;
                 m.cpu += a.cpu;
-                m.sessions += a.sessions;
-                m.claude_mem += a.claude_mem;
-                m.claude_cpu += a.claude_cpu;
+                m.agents += a.agents;
+                m.agent_mem += a.agent_mem;
+                m.agent_cpu += a.agent_cpu;
                 m.procs += a.procs;
                 m.adopted += a.adopted;
                 m.processes = [...m.processes, ...a.processes].sort((x, y) => y.rss - x.rss).slice(0, 8);
@@ -338,7 +372,7 @@ class HivetopIndicator extends PanelMenu.Button {
         }
         const apps = [...merged.values()];
         this._apps.sync(apps, a => a.key, () => new AppRow(this._ctx), {
-            sub: 'largest apps by memory, Claude counted above',
+            sub: 'largest apps by memory, AI agents counted above',
             cpu: this._ctx.cpu(sum(apps, a => a.cpu)),
             mem: fmt.bytes(sum(apps, a => a.mem)),
         });
@@ -352,35 +386,43 @@ class HivetopIndicator extends PanelMenu.Button {
             stacks.get(key).containers.push(c);
         }
         this._stacks.sync([...stacks.values()], g => g.project || g.containers[0].name, () => new StackRow(this._ctx), {
-            sub: snap.docker_ok ? 'containers not started by a Claude session' : 'Docker not reachable',
+            sub: snap.docker_ok ? 'containers not started by an AI agent' : 'Docker not reachable',
             cpu: this._ctx.cpu(sum(loose, c => c.cpu)),
             mem: fmt.bytes(sum(loose, c => c.mem)),
         });
     }
 
-    /** Interactive sessions, then one Background row for SDK sessions and shared tooling. */
-    _renderClaude(snap) {
-        const interactive = snap.sessions.filter(s => !s.background);
-        const busy = interactive.filter(s => s.status === 'busy').length;
-        const background = snap.sessions.filter(s => s.background).map(s => ({
-            key: s.key,
-            title: s.name,
-            sub: `${s.entrypoint} in ${fmt.homeShort(s.cwd, this._ctx.home)}`,
-            cpu: this._ctx.cpu(s.cpu),
-            mem: fmt.bytes(s.rss),
-            status: s.status === 'busy' ? 'busy' : 'idle',
-            rss: s.rss,
-            cpuValue: s.cpu,
+    /**
+     * Agents by state, one row per session left behind, then one Background
+     * row for SDK sessions and each provider's tooling.
+     */
+    _renderAgents(snap) {
+        const agents = snap.agents.filter(a => a.kind !== 'sdk')
+            .sort((x, y) => (STATE_ORDER[x.state] ?? 3) - (STATE_ORDER[y.state] ?? 3) || y.rss - x.rss);
+        const providers = new Set(agents.map(a => a.provider));
+        for (const a of agents)
+            a.tag = providers.size > 1 ? providerLabel(a.provider) : '';
+        const background = snap.agents.filter(a => a.kind === 'sdk').map(a => ({
+            key: a.key,
+            title: a.title,
+            sub: [`sdk in ${fmt.homeShort(a.cwd, this._ctx.home)}`, a.model,
+                a.tokens?.total ? `${fmt.tokens(a.tokens.total)} tok` : null].filter(Boolean).join(' \u00b7 '),
+            cpu: this._ctx.cpu(a.cpu),
+            mem: fmt.bytes(a.rss),
+            status: a.state === 'busy' ? 'busy' : 'idle',
+            rss: a.rss,
+            cpuValue: a.cpu,
         }));
-        if (snap.tooling.procs > 0) {
+        for (const t of snap.tooling) {
             background.push({
-                key: 'tooling',
-                title: 'Shared Claude tooling',
-                sub: `${snap.tooling.procs} process(es) outside any session, e.g. plugin workers`,
-                cpu: this._ctx.cpu(snap.tooling.cpu),
-                mem: fmt.bytes(snap.tooling.rss),
-                rss: snap.tooling.rss,
-                cpuValue: snap.tooling.cpu,
+                key: `tooling:${t.provider}`,
+                tooling: true,
+                title: t.label,
+                sub: `${t.procs} process(es) outside any session, e.g. plugin workers`,
+                cpu: this._ctx.cpu(t.cpu),
+                mem: fmt.bytes(t.rss),
+                rss: t.rss,
+                cpuValue: t.cpu,
             });
         }
         const bg = {
@@ -389,22 +431,32 @@ class HivetopIndicator extends PanelMenu.Button {
             rss: sum(background, b => b.rss),
             cpu: sum(background, b => b.cpuValue),
         };
-        const rows = background.length > 0 ? [...interactive, bg] : interactive;
-        const nbg = snap.sessions.length - interactive.length;
-        const sub = [`${busy} busy`, `${interactive.length - busy} idle`];
-        if (nbg)
-            sub.push(`${nbg} background`);
-        this._sessions.sync(rows, r => r.key,
-            r => r.key === BACKGROUND_KEY ? new BackgroundRow(this._ctx) : new SessionRow(this._ctx), {
-                count: snap.sessions.length,
-                sub: sub.join(', '),
-                cpu: this._ctx.cpu(sum(interactive, s => s.cpu + s.container_cpu) + bg.cpu),
-                mem: fmt.bytes(sum(interactive, s => s.rss + s.container_mem) + bg.rss),
-            });
+        const orphans = snap.orphans.map(o => ({...o, key: `${ORPHAN_PREFIX}${o.session_id}`}));
+        const rows = [...agents, ...orphans, ...background.length > 0 ? [bg] : []];
+        const count = state => agents.filter(a => a.state === state).length;
+        const states = [[count('busy'), 'busy'], [count('waiting'), 'need you'], [count('idle'), 'idle']]
+            .filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`);
+        let sub = states.join(', ') || 'none running';
+        if (orphans.length)
+            sub += ` \u00b7 ${orphans.length} left behind`;
+        this._agents.sync(rows, r => r.key, r => {
+            if (r.key === BACKGROUND_KEY)
+                return new BackgroundRow(this._ctx);
+            if (r.key.startsWith(ORPHAN_PREFIX))
+                return new OrphanRow(this._ctx);
+            return new AgentRow(this._ctx);
+        }, {
+            count: agents.length,
+            sub,
+            cpu: this._ctx.cpu(sum(agents, a => a.cpu + a.container_cpu) + sum(orphans, o => o.cpu) + bg.cpu),
+            mem: fmt.bytes(sum(agents, a => a.rss + a.container_mem) + sum(orphans, o => o.rss) + bg.rss),
+        });
     }
 
     destroy() {
         this._stopTimer();
+        this._waits?.destroy();
+        this._waits = null;
         for (const id of this._settingsIds ?? [])
             this._settings.disconnect(id);
         this._settingsIds = null;
@@ -421,7 +473,9 @@ function summaryOf(snap) {
         mem_used: snap.system.mem_used,
         mem_total: snap.system.mem_total,
         pressure: snap.system.pressure,
-        sessions: snap.sessions.filter(s => !s.background).length,
+        agents: snap.agents.filter(a => a.kind !== 'sdk').length,
+        waiting: snap.agents.filter(a => a.kind !== 'sdk' && a.state === 'waiting')
+            .map(a => ({key: a.key, title: a.title, reason: a.reason, since: a.state_since})),
         orphans: snap.orphans.length,
     };
 }

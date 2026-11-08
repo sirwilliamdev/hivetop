@@ -17,6 +17,10 @@
       <default>true</default>
       <summary>Color the bee icon when the kernel reports CPU, memory or IO pressure</summary>
     </key>
+    <key name="notify-waiting" type="b">
+      <default>false</default>
+      <summary>Notify when an AI agent starts waiting for you</summary>
+    </key>
     <key name="panel-position" type="s">
       <choices>
         <choice value="left"/>

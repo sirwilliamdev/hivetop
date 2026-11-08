@@ -110,6 +110,134 @@
     background-color: #ffa348;
 }
 
+.hivetop-status-wait {
+    background-color: #f6d32d;
+}
+
+.hivetop-tabs-item {
+    padding-top: 2px;
+    padding-bottom: 6px;
+}
+
+.hivetop-tabs {
+    spacing: 4px;
+    padding: 3px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.hivetop-tab {
+    padding: 5px 0;
+    border-radius: 8px;
+    font-weight: bold;
+    color: #9a9996;
+}
+
+.hivetop-tab:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.hivetop-tab:checked {
+    background-color: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+}
+
+.hivetop-tab:focus {
+    box-shadow: inset 0 0 0 2px rgba(98, 160, 234, 0.8);
+}
+
+.hivetop-chip {
+    margin-left: 6px;
+    padding: 0 5px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 5px;
+    color: #9a9996;
+    font-size: 0.72em;
+}
+
+.hivetop-title-warn {
+    color: #ffa348;
+}
+
+.hivetop-sub2 {
+    color: #c0bfbc;
+    font-size: 0.8em;
+}
+
+.hivetop-sub2-cmd {
+    font-family: monospace;
+    font-size: 0.76em;
+}
+
+.hivetop-sub2-wait {
+    color: #f6d32d;
+}
+
+.hivetop-kv {
+    spacing: 2px;
+    padding-left: 4px;
+}
+
+.hivetop-kv-row {
+    spacing: 12px;
+}
+
+.hivetop-kv-key {
+    min-width: 84px;
+    color: #9a9996;
+    font-size: 0.85em;
+}
+
+.hivetop-kv-value {
+    max-width: 400px;
+    color: #deddda;
+    font-size: 0.85em;
+}
+
+.hivetop-subagents {
+    spacing: 3px;
+    padding: 6px 10px;
+    border: 1px solid rgba(153, 193, 241, 0.3);
+    border-radius: 9px;
+    background-color: rgba(53, 132, 228, 0.17);
+}
+
+.hivetop-sa-head {
+    color: #99c1f1;
+    font-size: 0.78em;
+    font-weight: bold;
+}
+
+.hivetop-sa-line {
+    spacing: 8px;
+    font-size: 0.9em;
+}
+
+.hivetop-sa-type {
+    padding: 1px 6px;
+    border-radius: 5px;
+    background-color: rgba(153, 193, 241, 0.16);
+    color: #99c1f1;
+    font-family: monospace;
+    font-size: 0.75em;
+}
+
+/* Explicit colors: text in non-reactive menu items is dimmed otherwise. */
+.hivetop-sa-desc {
+    max-width: 300px;
+    color: #ffffff;
+}
+
+.hivetop-sa-done {
+    color: #9a9996;
+}
+
+.hivetop-sa-meta {
+    color: #9a9996;
+    font-size: 0.85em;
+    font-feature-settings: "tnum";
+}
+
 .hivetop-app-icon {
     width: 16px;
     height: 16px;

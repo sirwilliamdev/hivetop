@@ -6,8 +6,9 @@
 #   scripts/nested-test.sh [--size WxH] [--out DIR] STEP...
 #
 # Steps:
-#   open | close              open or close the hivetop menu
-#   expand:SECTION            toggle a section: sessions, orphans, apps, stacks
+#   open | close              open or close the hivetop menu (AI Agents opens expanded)
+#   tab:NAME                  switch tab: now, history
+#   expand:SECTION            toggle a section: agents, apps, stacks
 #   row:SECTION:INDEX         open the INDEX-th row of a section (expand the section first)
 #   hover:SECTION:INDEX       move a virtual pointer over that row
 #   shot:NAME                 screenshot to OUT/NAME.png
@@ -16,10 +17,10 @@
 #   cpu:LABEL:SECS            nested gnome-shell CPU use over SECS
 #   rss:LABEL                 nested gnome-shell RSS after a forced GC
 #   actors:LABEL              number of actors on the stage
-#   cycle:N                   N times: open, expand sessions and apps, close
+#   cycle:N                   N times: open, expand apps, switch to history and back, close
 #
 # Example:
-#   scripts/nested-test.sh open expand:sessions row:sessions:0 wait:1 shot:session
+#   scripts/nested-test.sh open row:agents:0 wait:1 shot:agent tab:history wait:2 shot:history
 #
 # Exits non-zero when the shell logged JavaScript errors.
 set -euo pipefail
@@ -83,6 +84,7 @@ for step in "$@"; do
     case "$cmd" in
         open) ev "_ht.menu.open(); 'open'" > /dev/null; sleep 4 ;;
         close) ev "_ht.menu.close(); 'closed'" > /dev/null; sleep 1 ;;
+        tab) ev "_ht._tabs.select('$a', true); 'x'" > /dev/null; sleep 1.5 ;;
         expand) ev "_ht._$a.header.activate(null); 'x'" > /dev/null; sleep 1 ;;
         row) ev "$(row "$a" "$b").setSubmenuShown(true); 'x'" > /dev/null; sleep 1 ;;
         hover)
@@ -109,8 +111,12 @@ for step in "$@"; do
             echo "actors $a: $(ev "let n = 0; const walk = x => { n++; x.get_children().forEach(walk); }; walk(global.stage); String(n)")" ;;
         cycle)
             for _ in $(seq "$a"); do
-                ev "_ht.menu.open(); _ht._sessions.header.activate(null); _ht._apps.header.activate(null); 'o'" > /dev/null
-                sleep 2.5
+                ev "_ht.menu.open(); _ht._apps.header.activate(null); 'o'" > /dev/null
+                sleep 2
+                ev "_ht._tabs.select('history', true); 'h'" > /dev/null
+                sleep 1
+                ev "_ht._tabs.select('now', true); 'n'" > /dev/null
+                sleep 1
                 ev "_ht.menu.close(); 'c'" > /dev/null
                 sleep 0.5
             done
