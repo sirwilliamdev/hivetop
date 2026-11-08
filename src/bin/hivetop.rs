@@ -10,7 +10,7 @@ use hivetop::{BUS_NAME, INTERFACE, OBJECT_PATH};
 const USAGE: &str = "usage:
   hivetop status [--json]
   hivetop history [--range 1h|24h|7d|30d] [--target kind:key] [--json]
-  hivetop kill <session name|session key|pid> [--yes]";
+  hivetop kill <agent name|title|key|pid> [--yes]";
 
 type Res<T> = Result<T, Box<dyn Error>>;
 
@@ -59,49 +59,77 @@ fn print_status(snap: &Value) {
         pressure
     );
     let now = u(snap, "ts");
-    for (title, background) in [("Claude sessions", false), ("Background sessions", true)] {
-        let rows: Vec<&Value> = list(snap, "sessions")
+    for (title, sdk) in [("AI agents", false), ("Background", true)] {
+        let rows: Vec<&Value> = list(snap, "agents")
             .iter()
-            .filter(|x| x["background"].as_bool() == Some(background))
+            .filter(|x| (s(x, "kind") == "sdk") == sdk)
             .collect();
         if rows.is_empty() {
             continue;
         }
         println!("\n{title} ({})", rows.len());
         println!(
-            "  {:<28} {:>7} {:>9} {:>5} {:>6} {:>7}  NOW",
-            "NAME", "CPU", "RAM", "PROCS", "STATUS", "AGE"
+            "  {:<34} {:<13} {:>6} {:>7} {:>5} {:>9} {:>6}  NOW",
+            "TITLE", "STATE", "CTX", "TOKENS", "CPU", "RAM", "AGE"
         );
         for x in rows {
+            let state = format!(
+                "{} {}",
+                s(x, "state"),
+                duration(now.saturating_sub(u(x, "state_since")))
+            );
             println!(
-                "  {:<28} {:>6.0}% {:>9} {:>5} {:>6} {:>7}  {}",
-                truncate(s(x, "name"), 28),
+                "  {:<34} {:<13} {:>6} {:>7} {:>4.0}% {:>9} {:>6}  {}",
+                truncate(s(x, "title"), 34),
+                state,
+                tokens(u(x, "context")),
+                tokens(u(&x["tokens"], "total")),
                 num(x, "cpu"),
                 bytes(u(x, "rss")),
-                u(x, "procs"),
-                s(x, "status"),
                 duration(now.saturating_sub(u(x, "started_at"))),
                 x["activity"].as_str().unwrap_or("-")
             );
+            let mut about = vec![s(x, "project").to_string()];
+            for k in ["model", "mode", "branch"] {
+                if let Some(v) = x[k].as_str() {
+                    about.push(v.to_string());
+                }
+            }
+            if let Some(j) = x["job"].as_object() {
+                about.push(format!("job {}", j["id"].as_str().unwrap_or("")));
+            }
+            let running = list(x, "subagents")
+                .iter()
+                .filter(|a| a["running"].as_bool() == Some(true))
+                .count();
+            if running > 0 {
+                about.push(format!("{running} subagent(s) running"));
+            }
+            println!("    {}", about.join(" · "));
+            if let Some(r) = x["reason"].as_str() {
+                println!("    waiting: {r}");
+            } else if let Some(d) = x["job"]["detail"].as_str() {
+                println!("    job: {d}");
+            }
+            println!("    produced: {}", produced(&x["outputs"]));
             let containers = list(x, "containers");
             if !containers.is_empty() {
                 println!(
-                    "  {:<28} {:>6.0}% {:>9}  {} container(s)",
-                    "  + docker",
+                    "    + {} container(s), {:.0}% CPU, {}",
+                    containers.len(),
                     num(x, "container_cpu"),
-                    bytes(u(x, "container_mem")),
-                    containers.len()
+                    bytes(u(x, "container_mem"))
                 );
             }
         }
     }
-    let tooling = &snap["tooling"];
-    if u(tooling, "procs") > 0 {
+    for t in list(snap, "tooling") {
         println!(
-            "\nShared Claude tooling: {} process(es), {:.0}% CPU, {}",
-            u(tooling, "procs"),
-            num(tooling, "cpu"),
-            bytes(u(tooling, "rss"))
+            "\n{}: {} process(es), {:.0}% CPU, {}",
+            s(t, "label"),
+            u(t, "procs"),
+            num(t, "cpu"),
+            bytes(u(t, "rss"))
         );
     }
     let orphans = list(snap, "orphans");
@@ -124,10 +152,10 @@ fn print_status(snap: &Value) {
     }
     println!("\nApps");
     for a in list(snap, "apps") {
-        let note = match (u(a, "sessions"), u(a, "claude_mem")) {
+        let note = match (u(a, "agents"), u(a, "agent_mem")) {
             (0, 0) => String::new(),
-            (0, m) => format!("  + Claude {} listed above", bytes(m)),
-            (n, m) => format!("  + {n} Claude session(s), {} listed above", bytes(m)),
+            (0, m) => format!("  + AI agents {} listed above", bytes(m)),
+            (n, m) => format!("  + {n} AI agent(s), {} listed above", bytes(m)),
         };
         println!(
             "  {:<36} {:>6.0}% {:>9}{note}",
@@ -143,12 +171,12 @@ fn print_status(snap: &Value) {
             let owner = if let Some(o) = c["orphan_of"].as_str() {
                 format!("orphan of {o}")
             } else if let Some(k) = c["session"].as_str() {
-                let name = list(snap, "sessions")
+                let name = list(snap, "agents")
                     .iter()
                     .find(|x| s(x, "key") == k)
-                    .map(|x| s(x, "name"))
+                    .map(|x| s(x, "title"))
                     .unwrap_or(k);
-                format!("session {name}")
+                format!("agent {name}")
             } else {
                 String::new()
             };
@@ -189,20 +217,103 @@ fn print_history(h: &Value) {
         println!("RAM  {}  peak {}", spark(&mem), bytes(peak_mem as u64));
     }
     println!(
-        "\n  {:<10} {:<34} {:>8} {:>8} {:>9} {:>9} {:>7}",
-        "KIND", "NAME", "CPU AVG", "CPU PEAK", "RAM AVG", "RAM PEAK", "MINUTES"
+        "\n  {:<10} {:<34} {:>8} {:>8} {:>9} {:>9} {:>7} {:>7}",
+        "KIND", "NAME", "CPU AVG", "CPU PEAK", "RAM AVG", "RAM PEAK", "MINUTES", "TOKENS"
     );
     for r in list(h, "ranking") {
+        let kind = match s(r, "kind") {
+            "session" => "agent",
+            k => k,
+        };
         println!(
-            "  {:<10} {:<34} {:>7.0}% {:>7.0}% {:>9} {:>9} {:>7}",
-            s(r, "kind"),
+            "  {:<10} {:<34} {:>7.0}% {:>7.0}% {:>9} {:>9} {:>7} {:>7}",
+            kind,
             truncate(s(r, "label"), 34),
             num(r, "cpu_avg"),
             num(r, "cpu_max"),
             bytes(num(r, "mem_avg") as u64),
             bytes(num(r, "mem_max") as u64),
-            u(r, "minutes")
+            u(r, "minutes"),
+            r["tokens"]
+                .as_u64()
+                .map(tokens)
+                .unwrap_or_else(|| "-".into())
         );
+    }
+}
+
+/// `317000` -> `317k`, `37700000` -> `37.7M`.
+fn tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{}k", n / 1_000),
+        _ => format!("{:.1}M", n as f64 / 1e6),
+    }
+}
+
+/// What an agent produced, in a few words, as the menu shows it.
+fn produced(o: &Value) -> String {
+    let n = |k: &str| u(o, k);
+    let plural =
+        |count: u64, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
+    let mut parts = Vec::new();
+    if n("files") > 0 {
+        parts.push(format!(
+            "{} (+{} -{})",
+            plural(n("files"), "file"),
+            n("lines_added"),
+            n("lines_removed")
+        ));
+    }
+    if n("commits") > 0 {
+        let pushed = if n("pushes") > 0 { ", pushed" } else { "" };
+        parts.push(format!("{}{pushed}", plural(n("commits"), "commit")));
+    } else if n("pushes") > 0 {
+        parts.push("pushed".into());
+    }
+    for c in list(o, "changes") {
+        let (kind, mark) = match s(c, "host") {
+            "gitlab" => ("MR", "!"),
+            "github" => ("PR", "#"),
+            _ => ("PR", "#"),
+        };
+        let state = match s(c, "state") {
+            "open" => String::new(),
+            st => format!(" {st}"),
+        };
+        parts.push(format!("{kind} {mark}{}{state}", u(c, "number")));
+    }
+    match n("plans") {
+        0 => {}
+        1 => parts.push("plan".into()),
+        k => parts.push(format!("{k} plans")),
+    }
+    for (key, word) in [
+        ("docs", "doc"),
+        ("published", "published page"),
+        ("notes", "note"),
+        ("deploys", "deploy"),
+        ("releases", "release"),
+        ("restores", "restore"),
+        ("todos", "to-do"),
+        ("issues", "issue"),
+        ("messages", "message"),
+        ("records", "record"),
+    ] {
+        if n(key) > 0 {
+            parts.push(plural(n(key), word));
+        }
+    }
+    if n("memory") > 0 {
+        parts.push("memory".into());
+    }
+    if n("config") > 0 {
+        parts.push("config".into());
+    }
+    if parts.is_empty() {
+        "answer only".into()
+    } else {
+        parts.join(", ")
     }
 }
 
@@ -240,17 +351,17 @@ fn kill(conn: &zbus::blocking::Connection, target: &str, yes: bool) -> Res<()> {
             .ok_or("no such process")?;
         ("pid", format!("{pid}:{start}"), format!("process {pid}"))
     } else {
-        let matches: Vec<&Value> = list(&snap, "sessions")
+        let matches: Vec<&Value> = list(&snap, "agents")
             .iter()
-            .filter(|x| [s(x, "name"), s(x, "key"), s(x, "id")].contains(&target))
+            .filter(|x| [s(x, "name"), s(x, "title"), s(x, "key"), s(x, "id")].contains(&target))
             .collect();
         match matches.as_slice() {
             [one] => (
-                "session",
+                "agent",
                 s(one, "key").to_string(),
-                format!("session {} ({} processes)", s(one, "name"), u(one, "procs")),
+                format!("agent {} ({} processes)", s(one, "title"), u(one, "procs")),
             ),
-            [] => return Err(format!("no session named {target}").into()),
+            [] => return Err(format!("no agent named {target}").into()),
             many => {
                 let keys: Vec<&str> = many.iter().map(|x| s(x, "key")).collect();
                 return Err(

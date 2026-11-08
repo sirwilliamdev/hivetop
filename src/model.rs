@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::docker::Container;
 use crate::procscan::ProcKey;
@@ -14,8 +15,10 @@ pub struct Snapshot {
     pub ncpu: usize,
     pub detail: bool,
     pub system: SystemView,
-    pub sessions: Vec<SessionView>,
-    pub tooling: GroupView,
+    pub agents: Vec<AgentView>,
+    /// Helpers of each provider outside any session, one entry per provider
+    /// with at least one process.
+    pub tooling: Vec<ToolingView>,
     pub orphans: Vec<OrphanView>,
     pub apps: Vec<AppView>,
     pub containers: Vec<Container>,
@@ -47,19 +50,148 @@ pub struct ProcView {
     pub infra: bool,
 }
 
+/// How an agent session was started.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    /// Started by a person in a terminal or an editor.
+    #[default]
+    Interactive,
+    /// A background job (`claude --bg`), run by the provider's own daemon.
+    Job,
+    /// Started by another program through an SDK (plugin observers).
+    Sdk,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentState {
+    #[default]
+    Idle,
+    Busy,
+    /// Stopped until a person answers: a permission dialog, a question.
+    Waiting,
+}
+
+/// Tokens sent to and produced by the model, summed over a session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub struct Tokens {
+    /// `input + cache_write + output`: work done for this session. Cache reads
+    /// are left out because every turn reads the whole context again.
+    pub total: u64,
+    pub input: u64,
+    pub output: u64,
+    pub cache_write: u64,
+    pub cache_read: u64,
+}
+
+impl Tokens {
+    pub fn add(&mut self, o: &Tokens) {
+        self.input += o.input;
+        self.output += o.output;
+        self.cache_write += o.cache_write;
+        self.cache_read += o.cache_read;
+        self.total = self.input + self.cache_write + self.output;
+    }
+}
+
+/// A pull request or merge request a session opened or acted on.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ChangeRequest {
+    pub number: u64,
+    pub url: String,
+    /// `github`, `gitlab` or `other`.
+    pub host: String,
+    /// `open`, `merged` or `closed`.
+    pub state: String,
+}
+
+/// What a session produced, in six groups. All zero means it only answered.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Outputs {
+    // Code
+    pub files: usize,
+    pub lines_added: u64,
+    pub lines_removed: u64,
+    pub commits: u32,
+    pub pushes: u32,
+    // Change requests
+    pub changes: Vec<ChangeRequest>,
+    // Documents
+    pub plans: u32,
+    pub docs: usize,
+    pub published: usize,
+    // Knowledge
+    pub memory: usize,
+    pub notes: u32,
+    pub config: usize,
+    // Operations
+    pub deploys: u32,
+    pub releases: u32,
+    pub restores: u32,
+    // Tasks and messages
+    pub todos: u32,
+    pub issues: u32,
+    pub messages: u32,
+    pub records: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct SubagentView {
+    pub id: String,
+    /// Agent type, such as `Explore` or `general-purpose`.
+    pub kind: String,
+    pub description: String,
+    pub running: bool,
+    pub started_at: u64,
+    pub ended_at: Option<u64>,
+    pub tokens: u64,
+}
+
+/// A background job as the provider's daemon reports it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct JobView {
+    pub id: String,
+    /// The provider's own state: `working`, `blocked`, `done`, ...
+    pub state: String,
+    /// One line the agent wrote about what it is doing, asking or did.
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct SessionView {
+pub struct AgentView {
     /// Stable for the life of the root process: `<pid>:<start>`.
     pub key: String,
-    /// Claude session id when known, else the key.
+    /// The provider's session id when known, else the key.
     pub id: String,
+    /// Provider id, such as `claude`.
+    pub provider: String,
+    pub kind: AgentKind,
     pub pid: i32,
+    /// Short name, such as `hivetop-97`.
     pub name: String,
+    /// What the session is about: a name the user gave it, else the
+    /// provider's own title, else `name`.
+    pub title: String,
     pub project: String,
     pub cwd: String,
-    pub status: String,
-    pub entrypoint: String,
-    pub background: bool,
+    pub state: AgentState,
+    /// Unix seconds when `state` last changed.
+    pub state_since: u64,
+    /// Why the agent waits, when `state` is `waiting`.
+    pub reason: Option<String>,
+    pub job: Option<JobView>,
+    pub model: Option<String>,
+    /// Permission mode, such as `auto` or `plan`.
+    pub mode: Option<String>,
+    pub branch: Option<String>,
+    /// Tokens in the context window after the last turn.
+    pub context: u64,
+    /// Session and subagents together.
+    pub tokens: Tokens,
+    pub outputs: Outputs,
+    /// Running subagents first, then the last finished ones.
+    pub subagents: Vec<SubagentView>,
     pub started_at: u64,
     pub app: Option<String>,
     pub procs: usize,
@@ -79,8 +211,11 @@ pub struct SessionView {
     pub processes: Vec<ProcView>,
 }
 
+/// A provider's helpers outside any session (plugin workers, its daemon).
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct GroupView {
+pub struct ToolingView {
+    pub provider: String,
+    pub label: String,
     pub procs: usize,
     pub rss: u64,
     pub cpu: f64,
@@ -106,16 +241,26 @@ pub struct AppView {
     pub kind: String,
     pub mem: u64,
     pub cpu: f64,
-    pub sessions: usize,
-    /// Usage of the Claude processes this app hosts, already left out of
-    /// `mem` and `cpu` because the Claude sections list them.
-    pub claude_mem: u64,
-    pub claude_cpu: f64,
-    /// Processes owned by this app, Claude ones excluded.
+    /// Agent sessions running inside this app.
+    pub agents: usize,
+    /// Usage of the agent processes this app hosts, already left out of
+    /// `mem` and `cpu` because the AI Agents section lists them.
+    pub agent_mem: u64,
+    pub agent_cpu: f64,
+    /// Processes owned by this app, agent ones excluded.
     pub procs: usize,
     /// Of those, processes found in another unit's cgroup (GNOME launch race, portal scopes).
     pub adopted: usize,
     pub processes: Vec<ProcView>,
+}
+
+/// An agent waiting for a person, as the `Updated` signal carries it.
+#[derive(Debug, Clone, Serialize)]
+pub struct WaitingView {
+    pub key: String,
+    pub title: String,
+    pub reason: Option<String>,
+    pub since: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +270,9 @@ pub struct Summary {
     pub mem_used: u64,
     pub mem_total: u64,
     pub pressure: u8,
-    pub sessions: usize,
+    /// Agent sessions, SDK ones excluded.
+    pub agents: usize,
+    pub waiting: Vec<WaitingView>,
     pub orphans: usize,
 }
 
@@ -137,7 +284,22 @@ impl Snapshot {
             mem_used: self.system.mem_used,
             mem_total: self.system.mem_total,
             pressure: self.system.pressure,
-            sessions: self.sessions.iter().filter(|s| !s.background).count(),
+            agents: self
+                .agents
+                .iter()
+                .filter(|a| a.kind != AgentKind::Sdk)
+                .count(),
+            waiting: self
+                .agents
+                .iter()
+                .filter(|a| a.kind != AgentKind::Sdk && a.state == AgentState::Waiting)
+                .map(|a| WaitingView {
+                    key: a.key.clone(),
+                    title: a.title.clone(),
+                    reason: a.reason.clone(),
+                    since: a.state_since,
+                })
+                .collect(),
             orphans: self.orphans.len(),
         }
     }
@@ -147,8 +309,10 @@ impl Snapshot {
         let mut s = self.clone();
         s.detail = false;
         s.system.spark.clear();
-        s.tooling.processes.clear();
-        for x in &mut s.sessions {
+        for x in &mut s.tooling {
+            x.processes.clear();
+        }
+        for x in &mut s.agents {
             x.spark.clear();
             x.processes.clear();
         }
@@ -167,8 +331,11 @@ impl Snapshot {
 #[derive(Debug, Clone, Default)]
 pub struct KillTargets {
     pub procs: HashMap<i32, (u64, String)>,
-    /// Session key -> processes (deepest first, root last) and one-off containers.
-    pub sessions: HashMap<String, (Vec<ProcKey>, Vec<String>)>,
+    /// Agent key -> processes (deepest first, root last) and one-off containers.
+    pub agents: HashMap<String, (Vec<ProcKey>, Vec<String>)>,
+    /// Background job id -> the provider binary that can stop it, and the
+    /// session's processes as a fallback.
+    pub jobs: HashMap<String, (PathBuf, Vec<ProcKey>)>,
     /// Ended session id -> leftover processes and containers.
     pub orphans: HashMap<String, (Vec<ProcKey>, Vec<String>)>,
     /// Containers attributed to a live session or left by an ended one.

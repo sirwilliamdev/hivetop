@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::NotifyConfig;
 use crate::format;
-use crate::model::Snapshot;
+use crate::model::{AgentKind, Snapshot};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notice {
@@ -27,11 +27,11 @@ impl Notifier {
         }
         let rss_limit = cfg.session_rss_mb * 1024 * 1024;
         let mut hot = HashSet::new();
-        for s in snap.sessions.iter().filter(|s| !s.background) {
+        for s in snap.agents.iter().filter(|s| s.kind != AgentKind::Sdk) {
             if s.rss > rss_limit {
                 out.push(Notice {
                     key: format!("rss:{}", s.key),
-                    summary: format!("Claude session {} uses {}", s.name, format::bytes(s.rss)),
+                    summary: format!("AI agent {} uses {}", s.title, format::bytes(s.rss)),
                     body: session_body(s.procs, s.activity.as_deref()),
                 });
             }
@@ -41,7 +41,7 @@ impl Notifier {
                 if now.duration_since(since) >= Duration::from_secs(cfg.session_cpu_secs) {
                     out.push(Notice {
                         key: format!("cpu:{}", s.key),
-                        summary: format!("Claude session {} at {:.0}% CPU", s.name, s.cpu),
+                        summary: format!("AI agent {} at {:.0}% CPU", s.title, s.cpu),
                         body: session_body(s.procs, s.activity.as_deref()),
                     });
                 }
@@ -139,13 +139,14 @@ pub fn send(conn: &zbus::blocking::Connection, n: &Notice) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{OrphanView, SessionView};
+    use crate::model::{AgentView, OrphanView};
 
     fn snap_with_session(rss: u64, cpu: f64) -> Snapshot {
         let mut s = Snapshot::default();
-        s.sessions.push(SessionView {
+        s.agents.push(AgentView {
             key: "1:1".into(),
             name: "proj-1".into(),
+            title: "proj-1".into(),
             rss,
             cpu,
             procs: 3,

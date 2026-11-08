@@ -1,6 +1,6 @@
+pub mod agents;
 pub mod apps;
 pub mod cgroup;
-pub mod claude;
 pub mod config;
 pub mod dbus;
 pub mod docker;

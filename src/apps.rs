@@ -12,7 +12,7 @@
 //! process in a portal scope goes to the launcher scope it descends from, and
 //! portal scopes named after the same PID as a launcher scope are aliases.
 //!
-//! Processes already listed in a Claude section are then taken out of their
+//! Processes already listed in the AI Agents section are then taken out of their
 //! app, so the menu shows each process once.
 
 use std::collections::HashMap;

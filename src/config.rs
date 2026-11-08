@@ -10,6 +10,34 @@ pub struct Config {
     pub history: HistoryConfig,
     pub notify: NotifyConfig,
     pub docker: DockerConfig,
+    pub agents: AgentsConfig,
+}
+
+/// One table per agent provider: `[agents.claude]`.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct AgentsConfig {
+    pub claude: ClaudeConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ClaudeConfig {
+    pub enabled: bool,
+    /// Claude Code's config directory; empty means `$CLAUDE_CONFIG_DIR` or `~/.claude`.
+    pub config_dir: String,
+    /// Per-session temp root; empty means `/tmp/claude-<uid>`.
+    pub tmp_dir: String,
+}
+
+impl Default for ClaudeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            config_dir: String::new(),
+            tmp_dir: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +78,7 @@ impl Default for Config {
             history: HistoryConfig::default(),
             notify: NotifyConfig::default(),
             docker: DockerConfig::default(),
+            agents: AgentsConfig::default(),
         }
     }
 }
@@ -158,6 +187,15 @@ mod tests {
         assert_eq!(cfg.notify.session_rss_mb, 2048);
         assert_eq!(cfg.notify.cooldown_secs, 600);
         assert_eq!(cfg.history.retention_days, 30);
+    }
+
+    #[test]
+    fn agents_table() {
+        let cfg: Config = toml::from_str("[agents.claude]\nconfig_dir = \"~/cc\"\n").unwrap();
+        assert!(cfg.agents.claude.enabled);
+        assert_eq!(cfg.agents.claude.config_dir, "~/cc");
+        let off: Config = toml::from_str("[agents.claude]\nenabled = false\n").unwrap();
+        assert!(!off.agents.claude.enabled);
     }
 
     #[test]

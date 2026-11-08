@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS series(
     kind TEXT NOT NULL,
     key TEXT NOT NULL,
     label TEXT NOT NULL,
+    tokens INTEGER,
     UNIQUE(kind, key)
 );
 CREATE TABLE IF NOT EXISTS samples(
@@ -42,6 +43,8 @@ struct Acc {
     cpu_max: f64,
     mem_sum: f64,
     mem_max: f64,
+    /// Latest token total of an agent session.
+    tokens: Option<u64>,
 }
 
 type SeriesKey = (&'static str, String);
@@ -64,7 +67,19 @@ pub fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
     }
     let conn = Connection::open(path)?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
+}
+
+/// Adds columns that databases created by older versions lack.
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let has_tokens = conn
+        .prepare("SELECT 1 FROM pragma_table_info('series') WHERE name = 'tokens'")?
+        .exists([])?;
+    if !has_tokens {
+        conn.execute_batch("ALTER TABLE series ADD COLUMN tokens INTEGER")?;
+    }
+    Ok(())
 }
 
 impl History {
@@ -120,6 +135,13 @@ impl History {
         a.mem_max = a.mem_max.max(mem);
     }
 
+    /// Remembers an agent session's token total; written with its next row.
+    pub fn record_tokens(&mut self, kind: &'static str, key: &str, tokens: u64) {
+        if let Some(a) = self.acc.get_mut(&(kind, key.to_string())) {
+            a.tokens = Some(tokens);
+        }
+    }
+
     pub fn flush(&mut self) -> rusqlite::Result<()> {
         let acc = std::mem::take(&mut self.acc);
         if acc.is_empty() {
@@ -155,6 +177,12 @@ impl History {
                     a.mem_max
                 ],
             )?;
+            if let Some(t) = a.tokens {
+                tx.execute(
+                    "UPDATE series SET tokens = ?1 WHERE id = ?2",
+                    params![t as i64, id],
+                )?;
+            }
         }
         tx.commit()
     }
@@ -262,7 +290,7 @@ pub fn query(conn: &Connection, range: &str, target: &str, now: u64) -> rusqlite
         "SELECT s.kind, s.key, s.label,
                 SUM(x.cpu_avg * x.bucket) / SUM(x.bucket), MAX(x.cpu_max),
                 SUM(x.mem_avg * x.bucket) / SUM(x.bucket), MAX(x.mem_max),
-                SUM(x.bucket) / 60
+                SUM(x.bucket) / 60, s.tokens
          FROM samples x JOIN series s ON s.id = x.series_id
          WHERE x.ts >= ?1 AND s.kind != 'system'
          GROUP BY s.id ORDER BY 6 DESC LIMIT 15",
@@ -278,6 +306,7 @@ pub fn query(conn: &Connection, range: &str, target: &str, now: u64) -> rusqlite
                 "mem_avg": r.get::<_, f64>(5)?,
                 "mem_max": r.get::<_, f64>(6)?,
                 "minutes": r.get::<_, i64>(7)?,
+                "tokens": r.get::<_, Option<i64>>(8)?,
             }))
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -372,5 +401,40 @@ mod tests {
         assert_eq!(v["ranking"][0]["label"], "acme-api-99");
         let v = query(h.connection(), "1h", "session:sid", now).unwrap();
         assert_eq!(v["target"]["label"], "acme-api-99");
+    }
+
+    #[test]
+    fn agent_tokens_and_title_reach_the_ranking() {
+        let mut h = mem_history();
+        let now: u64 = 1_800_000_000;
+        h.bucket = now - 120;
+        h.record("session", "claude:sid", "hivetop-97", 10.0, 1e9);
+        h.record("session", "claude:sid", "Popup layout", 10.0, 1e9);
+        h.record_tokens("session", "claude:sid", 317_000);
+        h.flush().unwrap();
+        let v = query(h.connection(), "1h", "session:claude:sid", now).unwrap();
+        assert_eq!(v["ranking"][0]["label"], "Popup layout");
+        assert_eq!(v["ranking"][0]["tokens"], 317_000);
+        assert_eq!(v["target"]["key"], "claude:sid");
+    }
+
+    #[test]
+    fn old_databases_gain_the_tokens_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE series(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, label TEXT NOT NULL, UNIQUE(kind, key));",
+        )
+        .unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('series') WHERE name = 'tokens'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
     }
 }

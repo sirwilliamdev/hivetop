@@ -1,4 +1,4 @@
-//! Tracks what each Claude session started, so that processes and one-off
+//! Tracks what each agent session started, so that processes and one-off
 //! containers still running after the session ended can be flagged.
 //!
 //! A process stays a member of its session after it leaves the session's tree

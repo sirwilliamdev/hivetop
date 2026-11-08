@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::{self, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,6 +17,7 @@ use crate::{docker, history};
 /// UI cannot keep the daemon sampling fast.
 const ACTIVE_GRACE: Duration = Duration::from_secs(10);
 const KILL_GRACE: Duration = Duration::from_secs(5);
+const JOB_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 pub struct Shared {
@@ -99,7 +101,7 @@ impl Service {
                     None => None,
                 }
             }
-            "session" => sh.targets.sessions.get(id).cloned(),
+            "agent" => sh.targets.agents.get(id).cloned(),
             "orphans" => sh.targets.orphans.get(id).cloned(),
             "container" => sh
                 .targets
@@ -109,6 +111,59 @@ impl Service {
             other => return Err(fdo::Error::InvalidArgs(format!("unknown kind {other}"))),
         };
         Ok(found.map(|(p, c)| (p, c, socket)))
+    }
+}
+
+impl Service {
+    /// Asks the provider to stop a background job (`<binary> stop <id>`), so it
+    /// ends cleanly and keeps its conversation; terminates its processes when
+    /// that fails.
+    fn stop_job(&self, id: &str) -> bool {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return false;
+        }
+        let Some((exe, keys)) = self.lock().targets.jobs.get(id).cloned() else {
+            return false;
+        };
+        let keys: Vec<ProcKey> = keys
+            .into_iter()
+            .filter(|k| k.0 > 1 && k.0 != self.own_pid)
+            .filter(|k| procscan::proc_uid(&self.proc_root, k.0) == Some(self.uid))
+            .collect();
+        let proc_root = self.proc_root.clone();
+        let id = id.to_string();
+        thread::spawn(move || {
+            let stopped = process::Command::new(&exe)
+                .arg("stop")
+                .arg(&id)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()
+                .and_then(|mut child| {
+                    let deadline = Instant::now() + JOB_STOP_TIMEOUT;
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => return Some(status.success()),
+                            Ok(None) if Instant::now() < deadline => {
+                                thread::sleep(Duration::from_millis(100))
+                            }
+                            _ => {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return None;
+                            }
+                        }
+                    }
+                })
+                .unwrap_or(false);
+            if !stopped {
+                eprintln!("hivetopd: {} stop {id} failed, terminating", exe.display());
+                terminate(proc_root, keys);
+            }
+        });
+        true
     }
 }
 
@@ -155,9 +210,13 @@ impl Service {
     }
 
     /// Terminates a target shown in the latest snapshot. `kind` is `pid` (id
-    /// `<pid>:<start>`), `session` (session key), `orphans` (ended session id) or
-    /// `container` (attributed container id). Returns false when the target is gone.
+    /// `<pid>:<start>`), `agent` (agent key), `job` (background job id),
+    /// `orphans` (ended session id) or `container` (attributed container id).
+    /// Returns false when the target is gone.
     fn kill(&self, kind: String, id: String) -> fdo::Result<bool> {
+        if kind == "job" {
+            return Ok(self.stop_job(&id));
+        }
         let Some((procs, containers, socket)) = self.resolve(&kind, &id)? else {
             return Ok(false);
         };
