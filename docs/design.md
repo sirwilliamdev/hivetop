@@ -1,30 +1,74 @@
 # hivetop: design notes
 
 A lightweight resource monitor for the GNOME top bar. It groups usage the way
-you work when several Claude Code sessions run in parallel: by **Claude
-session**, by **app** and by **container**. A plain process list would not.
+you work when several AI coding agents run in parallel: by **agent session**
+(Claude Code today), by **app** and by **container**. A plain process list
+would not.
 
 ```
 Top bar:   🐝 cpu 12%  ram 65%        (the bee turns yellow or red under CPU/memory/IO pressure)
 
-Menu:      System: 12 cores, calm                      ~~~    12%    65%
-           > Claude (8)   2 busy, 4 idle, 2 background        3.7%  3.8 GB
-               > acme-api-50   busy  npm test                 2.1%  1.2 GB
-                 ...
-               > Background (3)   SDK sessions and plugin workers  0.3%  341 MB
-           > Left behind by ended sessions (1)                  0%   19 MB
-           > Apps (12)                                          7%  8.5 GB
-           > Docker (1)                                       0.2%   65 MB
-           > History   last 24h: average CPU and RAM           11%  9.8 GB
+Menu:      System: 12 cores, calm                                   ~~~    12%    65%
+           [ Now ]  [ History ]
+           v AI Agents (4)   1 busy, 2 need you, 1 idle · 1 left behind  2.8%  4.3 GB
+               ● Add rate limiting to the public API                   0.3%  0.9 GB
+                 acme-api · needs you 40s · ctx 319k · 539k tok
+                 Waiting: dialog open
+               ● Nightly dependency upgrades  [bg]                     0.1%  380 MB
+                 acme-api · needs you 12m · 38.8k tok
+                 Waiting: Should I push main and start Phase 1?
+               ● Popup layout and AI providers                         2.1%  1.2 GB
+                 hivetop · busy 2m · ctx 152k · 317k tok · 1 subagent
+                 cargo test --release
+               ● Left behind: acme-api-3e                                0%   19 MB
+               > Background (3)   SDK sessions and tooling              0.3%  341 MB
+           > Apps (12)   largest apps by memory, AI agents counted above  7%  8.5 GB
+           > Docker (1)                                               0.2%   65 MB
 ```
 
-Sections start collapsed every time the menu opens; click a header to expand
-it. The Claude section lists interactive sessions first and ends with a
-Background row: SDK sessions (entrypoint `sdk-cli`, such as plugin observers)
-and Claude tooling running outside any session. Expanding a session shows its processes (MCP servers dimmed as
-infrastructure), the containers it started, and the actions **Go to <app>**
-(raises the VSCodium or terminal window that hosts the session), **Scratchpad**
-(opens the session's scratchpad folder), **Copy details** and **Kill session**.
+The menu has two tabs. **Now** shows what runs: AI Agents (open every time
+the menu opens), Apps and Docker (closed until clicked). **History** shows the
+system chart for 1 h to 30 days and the top consumers over that range; it
+loads when the tab opens.
+
+An agent row has three lines:
+
+1. The title: a name the user gave the session (`/rename`), else the agent's
+   own title for it, else its short name (`hivetop-97`).
+2. Project, state and how long it has been in it, context size, tokens used,
+   running subagents. States are busy (green), idle (grey) and **needs you**
+   (yellow): a permission dialog, a question, a blocked background job.
+3. The command running now, or why the agent waits, or for a background job
+   its own one-line status; when idle, what the session produced. Containers
+   and detached processes are appended.
+
+Rows are ordered: agents that need you, busy ones, idle ones, then one
+orange row per ended session that left work running, then Background (SDK
+sessions such as plugin observers, and each provider's tooling). A provider
+tag shows on rows only when agents of two providers run.
+
+Expanding an agent shows the actions **Go to <app>** (raises the VSCodium or
+terminal window that hosts the session), **Scratchpad**, **Copy details** and
+**Kill session** (for a background job: **Attach**, which copies `claude
+attach <id>`, and **Stop job**); then model, permission mode, branch,
+context, tokens, cache reads and outputs; then subagents in a tinted panel
+(running first, then the last 3 finished); then containers and processes (MCP
+servers dimmed as infrastructure).
+
+**Tokens** are input + cache writes + output, for the session and its
+subagents. Cache reads are shown apart and left out: every turn reads the
+whole context again, so on a long session they are 60 times the rest.
+
+**Outputs** are what a session produced, in six groups, or "answer only":
+
+| Group | Counts | Read from |
+|---|---|---|
+| Code | files, lines +/-, commits, pushes | file edits, git operations Claude records |
+| Change requests | PRs (GitHub `#N`), MRs (GitLab `!N`), merged or closed | Claude's PR link records, git operations |
+| Documents | plans, docs (`.md`, `.rst`, `.txt`), published pages and PDFs | plan tool, edited paths, Artifact and docs tools |
+| Knowledge | memory files, notes, `CLAUDE.md` and Claude config | edited paths, note tools |
+| Operations | deploys, releases, database restores | shell commands |
+| Tasks and messages | to-dos, issues, mails and messages, records in other systems | tool names, shell commands |
 
 CPU in the menu is a share of the whole machine, as in GNOME System Monitor:
 on 12 cores, one busy core shows as 8.3%. The CLI and the notification
@@ -36,37 +80,60 @@ thresholds use percent of one core, like `top`.
 GNOME Shell extension (GJS)            hivetopd (Rust, systemd --user)
   top-bar label  <── Updated signal ──  samples every 5 s (2 s while the menu is open)
   menu           ── GetSnapshot ────>   /proc, /sys/fs/cgroup, /proc/pressure
-  actions        ── Kill/SetActive ─>   ~/.claude/sessions/*.json, Docker socket
+  actions        ── Kill/SetActive ─>   agent state files and transcripts, Docker socket
                                         SQLite history, desktop notifications
 hivetop CLI      ── same D-Bus API ─>
 ```
 
 GNOME on Wayland only lets Shell extensions draw in the top bar, so the
 extension is a thin view. All sampling happens in the daemon, outside the
-compositor. Measured on a 12-core laptop: the daemon uses about 6 MB RSS and
+compositor. Measured on a 12-core laptop: the daemon uses about 7 MB RSS and
 0.2% of one core with the menu closed, 0.5% while it is open; inside GNOME
-Shell the extension costs about 1% of one core while the menu is open and
+Shell the extension costs about 2% of one core while the menu is open and
 nothing measurable while it is closed.
 
-- **Claude sessions**: a session is a `claude` process with no `claude`
-  ancestor, plus all its descendants. Name, status (busy/idle) and session id
-  come from `~/.claude/sessions/<pid>.json` when present. That file is an
-  internal Claude Code format, so a session still shows without it, named
-  after its working directory. Children started in the first 10 s are counted
-  as infrastructure (MCP servers, plugins). The "now running" text is the
-  newest other child, with the Bash tool wrapper stripped to the real command.
-  A background command whose shell exits gets reparented to `systemd --user`
-  and leaves the tree; it stays in its session as "detached", so a dev server
-  started by Claude is counted, and killed, with the session. Memory is
-  RssAnon + RssShmem per process: plain RSS counts shared pages (the `claude`
-  binary, libraries) once per process and overstates a group of them.
+- **Agent providers** (`src/agents/`): a provider knows one coding agent:
+  which processes are its sessions, which are its own helpers, and what it
+  writes on disk about each session. Process trees, memory, containers and
+  orphans are generic, so another agent (Codex, opencode) needs only a new
+  provider. Claude Code is the only one so far.
+- **Agent sessions**: a session is a process the provider recognises, with no
+  other session above it, plus all its descendants; an agent started as a
+  tool by another stays in the session that started it. Children started in
+  the first 10 s are counted as infrastructure (MCP servers, plugins). The
+  "now running" text is the newest other child, with the Bash tool wrapper
+  stripped to the real command. A background command whose shell exits gets
+  reparented to `systemd --user` and leaves the tree; it stays in its session
+  as "detached", so a dev server started by an agent is counted, and killed,
+  with the session. Memory is RssAnon + RssShmem per process: plain RSS
+  counts shared pages (the `claude` binary, libraries) once per process and
+  overstates a group of them.
+- **Claude Code**: a session is a `claude` process, or any process its
+  session file names. All its files are internal, undocumented formats, so
+  each one only enriches a session, which still shows without them:
+  - `~/.claude/sessions/<pid>.json`: name, status (busy, idle, waiting and
+    why), kind (interactive or background job).
+  - `~/.claude/jobs/<id>/state.json`: a background job's state and its
+    one-line status.
+  - `~/.claude/projects/<dir>/<session id>.jsonl`, the transcript: title,
+    model, permission mode, branch, token usage, and what tools did. It is
+    read incrementally, 1 MB at a time, from where the last read stopped.
+  - `<session id>/subagents/agent-*.meta.json` next to it: each subagent's
+    type and task, plus its own transcript for its tokens and outputs.
+    Subagents run inside the session's process, so they have no CPU or
+    memory of their own.
+  - `/tmp/claude-<uid>/<project>/<session id>/scratchpad`.
+
+  `claude --bg` runs jobs under a supervisor (`claude daemon run`) and one
+  terminal host per job (`claude bg-pty-host`). Both count as Claude Code
+  tooling, so each job is its own session.
 - **Apps**: the systemd scopes GNOME creates for each launched app
   (`app-gnome-codium-1234.scope`), read from cgroup v2 files, cheap and
   children included. Memory leaves out reclaimable page cache, like the
-  system "used" figure. Processes listed in a Claude section (sessions,
+  system "used" figure. Processes listed in the AI Agents section (sessions,
   background, left behind) are taken out of their app, so each process is
   counted once: their RssAnon + RssShmem and CPU leave the app's figures, and
-  the app row says how much Claude it hosts. Two GNOME quirks are corrected:
+  the app row says how many agents it hosts. Two GNOME quirks are corrected:
   - GNOME moves an app into its scope only after spawning it, so whatever a
     browser forks in between stays in GNOME Shell's cgroup. That made Brave's
     renderers look like 4 GB of "GNOME Shell". Such processes are credited to
@@ -83,10 +150,11 @@ nothing measurable while it is closed.
   `$XDG_RUNTIME_DIR/hivetop/tracker.json`, so it survives a daemon restart
   (not a logout). Processes that left their session before the daemon first
   saw them cannot be attributed.
-- **History**: per-minute average and peak for the system, every session, the
-  top 5 apps (their own usage, Claude left out) and every container. Rows
-  are merged into 10-minute rows after 7 days and deleted after 30 days.
-  Stored in `~/.local/share/hivetop/history.db` (about 10 MB).
+- **History**: per-minute average and peak for the system, every agent session
+  (labelled with its title, plus its latest token total), the top 5 apps
+  (their own usage, agents left out) and every container. Rows are merged
+  into 10-minute rows after 7 days and deleted after 30 days. Stored in
+  `~/.local/share/hivetop/history.db` (about 10 MB).
 
 ## Requirements
 
@@ -123,9 +191,13 @@ can create and open that file.
 
 Default notifications fire when:
 
-- a session uses more than 4 GB, or more than 300% CPU for 60 s;
+- an agent session uses more than 4 GB, or more than 300% CPU for 60 s;
 - memory pressure (PSI some, avg10) goes above 20%;
 - an ended session leaves processes or containers running.
+
+With **Notifications > When an AI agent needs you** on in the extension
+preferences (off by default), the extension also notifies once each time an
+agent starts waiting; clicking the notification raises the agent's window.
 
 ## CLI
 
@@ -133,18 +205,29 @@ Default notifications fire when:
 hivetop status            # same data as the menu, as a table
 hivetop status --json     # full snapshot
 hivetop history --range 7d
-hivetop kill acme-api-99  # SIGTERM the whole session tree, SIGKILL after 5 s
+hivetop kill acme-api-99  # SIGTERM the whole session tree (by name, title or key), SIGKILL after 5 s
 hivetop kill 12345        # one process
 ```
 
 ## Security notes
 
 - `Kill` only accepts targets present in the latest snapshot, owned by your
-  user, and never PID 1, `gnome-shell`, `systemd` or the daemon itself.
+  user, and never PID 1, `gnome-shell`, `systemd` or the daemon itself. Stop
+  job runs the job's own `claude` binary as `claude stop <id>`, and
+  terminates the job's processes if that fails.
 - Only containers attributed to a session, or left behind by one, can be
   stopped. Note that Docker socket access is equivalent to root.
-- The daemon reads `~/.claude/sessions/*.json` only. It never opens the `.key`
-  files next to them, and never reads process environments.
+- From Claude Code's files the daemon keeps metadata only. Transcripts hold
+  the whole conversation: hivetop parses only the lines it needs, keeps
+  titles, model, mode, branch, token counts, file paths and git operation
+  types, and never stores message text or prompts. Shell commands are matched
+  against a few patterns (deploy, release, restore, issue create) and
+  dropped. Job state files also hold environment variables, which the parser
+  skips. It never opens the `.key` files next to the session files, never
+  reads the background daemon's `roster.json` (it holds auth tokens), and
+  never reads process environments.
+- The menu never shows a prompt: what you typed can be on screen while you
+  share it.
 
 ## Development
 
@@ -155,8 +238,10 @@ cargo build --release && ./target/release/hivetopd   # run against the live syst
 ```
 
 Paths can be redirected for testing: `HIVETOP_PROC_ROOT`,
-`HIVETOP_CGROUP_ROOT`, `HIVETOP_CLAUDE_SESSIONS`, plus `XDG_CONFIG_HOME` and
-`XDG_DATA_HOME` for config and history.
+`HIVETOP_CGROUP_ROOT`, `HIVETOP_CLAUDE_SESSIONS` (its parent directory is then
+read for `projects/` and `jobs/`), `HIVETOP_CLAUDE_TMP`, plus
+`XDG_CONFIG_HOME` and `XDG_DATA_HOME` for config and history. Otherwise
+`[agents.claude]` in the config sets Claude Code's directories.
 
 To try the extension without logging out, `scripts/nested-test.sh` runs a
 nested GNOME Shell with this checkout's extension and daemon, isolated from your
@@ -165,8 +250,8 @@ RSS and leak checks):
 
 ```sh
 cargo build --release
-scripts/nested-test.sh open expand:sessions row:sessions:0 wait:1 shot:session
-scripts/nested-test.sh rss:start cycle:25 rss:after   # leak check
+scripts/nested-test.sh open row:agents:0 wait:1 shot:agent tab:history wait:2 shot:history
+scripts/nested-test.sh cycle:5 actors:warm cycle:20 actors:after   # leak check
 ```
 
 GNOME Shell keeps memory for every popup menu item that gets destroyed, so the
