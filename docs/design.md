@@ -22,12 +22,19 @@ Menu:      System: 12 cores, calm                                   ~~~    12%  
                  cargo test --release
                ● Left behind: acme-api-3e                                0%   19 MB
                > Background (3)   SDK sessions and tooling              0.3%  341 MB
-           > Apps (12)   largest apps by memory, AI agents counted above  7%  8.5 GB
+           v Apps (7)   apps with an open window, AI agents counted above  7%  9.2 GB
+               Brave Web Browser   34 processes                           0.2%  2.2 GB
+               ...
+             > System & background (63)   desktop session, services, ...  2%  1.4 GB
            > Docker (1)                                               0.2%   65 MB
 ```
 
 The menu has two tabs. **Now** shows what runs: AI Agents (open every time
-the menu opens), Apps and Docker (closed until clicked). **History** shows the
+the menu opens), Apps and Docker (closed until clicked). Apps lists the apps
+with an open window; everything else (GNOME Shell, session services, portals,
+tray apps such as Solaar, an app closed to the tray) sits in the **System &
+background** group after them, closed until clicked, its rows expandable as
+any app row. **History** shows the
 system chart for 1 h to 30 days and the top consumers over that range; it
 loads when the tab opens.
 
@@ -144,6 +151,13 @@ nothing measurable while it is closed.
   - An app can leave GNOME Shell's cgroup for the user manager before its
     scope exists, and never get one (Sublime Text). When a launcher entry
     carries the process name, it becomes its own app with its children.
+
+  The extension puts a unit under Apps when one of its windows is open
+  (matched by app id or by PID; desktop icons and other windows kept off the
+  taskbar do not count), and under System & background otherwise. The daemon
+  cannot see windows, so for the CLI it guesses from desktop entries: an app
+  has a launcher entry that is shown and is not autostarted (`ui` in the
+  snapshot). It sends the 12 largest of each kind, and totals for the rest.
 - **Containers**: listed through the Docker socket, measured through their
   cgroups. A container belongs to a session when the session's working
   directory is its compose `working_dir` or lies inside it (addon repos,

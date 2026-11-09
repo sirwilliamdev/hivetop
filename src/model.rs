@@ -20,7 +20,11 @@ pub struct Snapshot {
     /// with at least one process.
     pub tooling: Vec<ToolingView>,
     pub orphans: Vec<OrphanView>,
+    /// Largest apps opened from a launcher and largest other units (desktop
+    /// session, services, autostarted tray apps), up to a cap for each.
     pub apps: Vec<AppView>,
+    /// Units with memory left out of `apps` by the caps.
+    pub apps_other: AppTotals,
     pub containers: Vec<Container>,
     pub docker_ok: bool,
 }
@@ -235,10 +239,21 @@ pub struct OrphanView {
     pub processes: Vec<ProcView>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct AppTotals {
+    pub units: usize,
+    pub mem: u64,
+    pub cpu: f64,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AppView {
     pub id: String,
+    /// Slice the unit sits in: `app`, `session` or `background`.
     pub kind: String,
+    /// Opened from a launcher: a shown desktop entry, not autostarted. The
+    /// extension decides from open windows instead; this is for the CLI.
+    pub ui: bool,
     pub mem: u64,
     pub cpu: f64,
     /// Agent sessions running inside this app.
@@ -251,6 +266,8 @@ pub struct AppView {
     pub procs: usize,
     /// Of those, processes found in another unit's cgroup (GNOME launch race, portal scopes).
     pub adopted: usize,
+    /// All of them, so the extension can match open windows by PID.
+    pub pids: Vec<i32>,
     pub processes: Vec<ProcView>,
 }
 

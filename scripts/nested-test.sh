@@ -8,7 +8,7 @@
 # Steps:
 #   open | close              open or close the hivetop menu (AI Agents opens expanded)
 #   tab:NAME                  switch tab: now, history
-#   expand:SECTION            toggle a section: agents, apps, stacks
+#   expand:SECTION            toggle a section: agents, apps, background (System & background, inside apps), stacks
 #   row:SECTION:INDEX         open the INDEX-th row of a section (expand the section first)
 #   hover:SECTION:INDEX       move a virtual pointer over that row
 #   shot:NAME                 screenshot to OUT/NAME.png

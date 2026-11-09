@@ -18,8 +18,8 @@ use crate::docker::{self, DockerScanner};
 use crate::format;
 use crate::history::History;
 use crate::model::{
-    AgentKind, AgentState, AgentView, AppView, KillTargets, OrphanView, Point, ProcView, Snapshot,
-    SystemView, ToolingView, round1,
+    AgentKind, AgentState, AgentView, AppTotals, AppView, KillTargets, OrphanView, Point, ProcView,
+    Snapshot, SystemView, ToolingView, round1,
 };
 use crate::notify::{Notice, Notifier};
 use crate::orphans::{LiveContainer, LiveSession, OrphanTracker};
@@ -33,6 +33,7 @@ const SPARK_POINTS: usize = 72;
 /// infrastructure (MCP servers, plugins), not tool activity.
 const INFRA_WINDOW_SECS: u64 = 10;
 const MAX_SESSION_PROCS: usize = 25;
+/// Rows sent for each app group: launcher apps, and everything else.
 const MAX_APPS: usize = 12;
 /// Desktop entries change only when software is installed or removed.
 const DESKTOP_RESCAN: Duration = Duration::from_secs(60);
@@ -818,16 +819,26 @@ impl Sampler {
             }
         }
         let mut all_apps: Vec<AppView> = by_id.into_values().collect();
+        for a in &mut all_apps {
+            a.ui = a.kind == "app" && self.desktop.launcher(&a.id);
+        }
         all_apps.sort_by_key(|a| std::cmp::Reverse(a.mem));
         let mut apps = Vec::new();
-        for mut a in all_apps
-            .iter()
-            .filter(|a| a.mem > 0)
-            .take(MAX_APPS)
-            .cloned()
-        {
+        let mut apps_other = AppTotals::default();
+        let (mut ui_rows, mut other_rows) = (0, 0);
+        for mut a in all_apps.iter().filter(|a| a.mem > 0).cloned() {
+            let taken = if a.ui { &mut ui_rows } else { &mut other_rows };
+            if *taken == MAX_APPS {
+                apps_other.units += 1;
+                apps_other.mem += a.mem;
+                apps_other.cpu += a.cpu;
+                continue;
+            }
+            *taken += 1;
             let mut list = pids_by_id.remove(a.id.as_str()).unwrap_or_default();
             a.procs = list.len();
+            a.pids = list.iter().map(|p| p.pid).collect();
+            a.pids.sort_unstable();
             a.cpu = round1(a.cpu);
             a.agent_cpu = round1(a.agent_cpu);
             a.agents = sessions
@@ -938,6 +949,10 @@ impl Sampler {
             tooling,
             orphans,
             apps,
+            apps_other: AppTotals {
+                cpu: round1(apps_other.cpu),
+                ..apps_other
+            },
             containers,
             docker_ok: self.docker.ok,
         };

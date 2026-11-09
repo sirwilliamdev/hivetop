@@ -369,14 +369,16 @@ export function later(owner, ms, fn) {
  */
 export const SectionHeader = GObject.registerClass(
 class HivetopSectionHeader extends PopupMenu.PopupBaseMenuItem {
-    _init(onToggle) {
-        super._init({style_class: 'hivetop-section-header'});
+    /** A `nested` header heads a group of rows inside a section and looks like a row. */
+    _init(onToggle, {nested = false} = {}) {
+        super._init({style_class: nested ? 'hivetop-section-header hivetop-subsection-header' : 'hivetop-section-header'});
         this._onToggle = onToggle;
         this.expanded = false;
         this._arrow = new St.Icon({icon_name: 'pan-end-symbolic', icon_size: 16, y_align: CENTER});
         this.add_child(this._arrow);
         this.line = new StatLine();
-        this.line.title.add_style_class_name('hivetop-section-title');
+        if (!nested)
+            this.line.title.add_style_class_name('hivetop-section-title');
         this.add_child(this.line.actor);
     }
 

@@ -429,6 +429,8 @@ class HivetopAppRow extends ExpandableRow {
             parts.push('desktop session');
         else if (a.kind === 'background')
             parts.push('background service');
+        else if (!a.windowed)
+            parts.push('no open window');
         this.line.set({title: app?.get_name() ?? a.ids[0], sub: parts.join(', '), cpu: this._ctx.cpu(a.cpu), mem: fmt.bytes(a.mem)});
         this.setExpandable(a.processes.length > 0);
     }

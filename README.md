@@ -22,7 +22,8 @@ Remove with `./install.sh --uninstall`.
   memory or IO pressure.
 - **Menu**, tab **Now**: AI agents with their title, state (busy, idle,
   needs you), context, tokens, outputs and subagents; background jobs;
-  processes left behind by ended sessions; apps (agents left out); Docker.
+  processes left behind by ended sessions; apps with an open window (agents
+  left out), then the desktop session and background services; Docker.
   Tab **History**: 30 days of CPU and RAM, top consumers.
 - **CLI**: `hivetop status`, `hivetop history --range 7d`, `hivetop kill <agent|pid>`.
 - **Config**: `~/.config/hivetop/config.toml`, see [`dist/config.example.toml`](dist/config.example.toml).

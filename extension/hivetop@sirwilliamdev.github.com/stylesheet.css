@@ -40,6 +40,10 @@
     font-weight: normal;
 }
 
+.hivetop-subsection {
+    padding-left: 12px;
+}
+
 .hivetop-warn-header .hivetop-section-title {
     color: #ffa348;
     font-weight: bold;

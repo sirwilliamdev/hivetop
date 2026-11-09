@@ -150,19 +150,39 @@ fn print_status(snap: &Value) {
             }
         }
     }
-    println!("\nApps");
-    for a in list(snap, "apps") {
-        let note = match (u(a, "agents"), u(a, "agent_mem")) {
-            (0, 0) => String::new(),
-            (0, m) => format!("  + AI agents {} listed above", bytes(m)),
-            (n, m) => format!("  + {n} AI agent(s), {} listed above", bytes(m)),
-        };
-        println!(
-            "  {:<36} {:>6.0}% {:>9}{note}",
-            truncate(s(a, "id"), 36),
-            num(a, "cpu"),
-            bytes(u(a, "mem"))
-        );
+    let apps = list(snap, "apps");
+    let other = &snap["apps_other"];
+    for (title, ui) in [("Apps", true), ("System & background", false)] {
+        let rows: Vec<&Value> = apps
+            .iter()
+            .filter(|a| a["ui"].as_bool().unwrap_or(false) == ui)
+            .collect();
+        let hidden = if ui { 0 } else { u(other, "units") };
+        if rows.is_empty() && hidden == 0 {
+            continue;
+        }
+        println!("\n{title}");
+        for a in rows {
+            let note = match (u(a, "agents"), u(a, "agent_mem")) {
+                (0, 0) => String::new(),
+                (0, m) => format!("  + AI agents {} listed above", bytes(m)),
+                (n, m) => format!("  + {n} AI agent(s), {} listed above", bytes(m)),
+            };
+            println!(
+                "  {:<36} {:>6.0}% {:>9}{note}",
+                truncate(s(a, "id"), 36),
+                num(a, "cpu"),
+                bytes(u(a, "mem"))
+            );
+        }
+        if hidden > 0 {
+            println!(
+                "  {:<36} {:>6.0}% {:>9}",
+                format!("{hidden} smaller unit(s)"),
+                num(other, "cpu"),
+                bytes(u(other, "mem"))
+            );
+        }
     }
     let containers = list(snap, "containers");
     if !containers.is_empty() {

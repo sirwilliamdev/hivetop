@@ -2,6 +2,8 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -29,11 +31,16 @@ const STATE_ORDER = {waiting: 0, busy: 1, idle: 2};
  * refreshes. Rows are refreshed only while the section is expanded, and kept
  * (hidden) when it collapses: GNOME Shell retains memory for every destroyed
  * menu item, so rebuilding rows on each open would grow it.
+ *
+ * A `nested` section is a group inside another section's rows, after them. It
+ * is not a submenu: GNOME Shell keeps one submenu open at a time, so rows
+ * inside a submenu could never open.
  */
 class KeyedSection {
-    constructor(menu, title, reveal) {
+    constructor(menu, title, reveal, {nested = false} = {}) {
         this.title = title;
         this.rows = new Map();
+        this.groups = [];
         this._last = null;
         this.header = new SectionHeader(expanded => {
             if (expanded) {
@@ -43,19 +50,31 @@ class KeyedSection {
                 this._closeRows();
             }
             this.section.actor.visible = expanded;
-        });
+        }, {nested});
         this.section = new PopupMenu.PopupMenuSection();
+        if (nested)
+            this.section.actor.add_style_class_name('hivetop-subsection');
         menu.addMenuItem(this.header);
         menu.addMenuItem(this.section);
         this.header.visible = false;
         this.section.actor.visible = false;
     }
 
-    /** `summary` is `{sub, cpu, mem}` for the header, plus `count` when it differs from the rows. */
-    sync(items, keyOf, create, {count = items.length, ...summary} = {}) {
+    /** A group shown after this section's rows. */
+    addGroup(title, reveal) {
+        const group = new KeyedSection(this.section, title, reveal, {nested: true});
+        this.groups.push(group);
+        return group;
+    }
+
+    /**
+     * `summary` is `{sub, cpu, mem}` for the header, plus `count` when it
+     * differs from the rows and `shown` when the header shows without rows.
+     */
+    sync(items, keyOf, create, {count = items.length, shown = items.length > 0, ...summary} = {}) {
         this._last = {items, keyOf, create};
         this.header.line.set({title: `${this.title} (${count})`, ...summary});
-        this.header.visible = items.length > 0;
+        this.header.visible = shown;
         if (this.header.expanded)
             this._syncRows();
     }
@@ -63,6 +82,15 @@ class KeyedSection {
     _syncRows() {
         if (this._last)
             syncKeyed(this.section, this.rows, this._last.items, this._last.keyOf, this._last.create);
+        // New rows are appended after the groups; move the groups back to the end.
+        const box = this.section.box;
+        const tail = this.groups.flatMap(g => [g.header, g.section.actor]);
+        const kids = box.get_children();
+        const end = kids.slice(kids.length - tail.length);
+        if (!tail.every((a, i) => a === end[i])) {
+            for (const a of tail)
+                box.set_child_above_sibling(a, null);
+        }
     }
 
     _closeRows() {
@@ -70,12 +98,16 @@ class KeyedSection {
             if (row.menu?.isOpen)
                 row.menu.close(false);
         }
+        for (const group of this.groups)
+            group._closeRows();
     }
 
     collapse() {
         this.header.setExpanded(false);
         this._closeRows();
         this.section.actor.visible = false;
+        for (const group of this.groups)
+            group.collapse();
     }
 
     expand() {
@@ -96,6 +128,29 @@ function metric(key) {
 
 function sum(items, f) {
     return items.reduce((n, x) => n + f(x), 0);
+}
+
+const WINDOW_TYPES = new Set([Meta.WindowType.NORMAL, Meta.WindowType.DIALOG]);
+
+/**
+ * App ids and PIDs owning a window a person works with. Desktop icons, docks
+ * and other windows kept off the taskbar do not count.
+ */
+function windowOwners() {
+    const tracker = Shell.WindowTracker.get_default();
+    const apps = new Set();
+    const pids = new Set();
+    for (const w of global.display.list_all_windows()) {
+        if (w.is_skip_taskbar() || !WINDOW_TYPES.has(w.get_window_type()))
+            continue;
+        const app = tracker.get_window_app(w);
+        if (app)
+            apps.add(app.get_id());
+        const pid = w.get_pid();
+        if (pid > 0)
+            pids.add(pid);
+    }
+    return {apps, pids};
 }
 
 export const Indicator = GObject.registerClass(
@@ -202,6 +257,7 @@ class HivetopIndicator extends PanelMenu.Button {
         content.addMenuItem(this._past);
         this._agents = new KeyedSection(this._now, 'AI Agents', reveal);
         this._apps = new KeyedSection(this._now, 'Apps', reveal);
+        this._background = this._apps.addGroup('System & background', reveal);
         this._stacks = new KeyedSection(this._now, 'Docker', reveal);
         this._history = new HistoryPane(this._past, this._ctx);
         this._past.actor.visible = false;
@@ -365,16 +421,33 @@ class HivetopIndicator extends PanelMenu.Button {
                 m.agent_cpu += a.agent_cpu;
                 m.procs += a.procs;
                 m.adopted += a.adopted;
+                m.pids = m.pids.concat(a.pids ?? []);
                 m.processes = [...m.processes, ...a.processes].sort((x, y) => y.rss - x.rss).slice(0, 8);
             } else {
-                merged.set(key, {key, ids: [a.id], ...a});
+                merged.set(key, {key, ids: [a.id], ...a, pids: a.pids ?? []});
             }
         }
-        const apps = [...merged.values()];
-        this._apps.sync(apps, a => a.key, () => new AppRow(this._ctx), {
-            sub: 'largest apps by memory, AI agents counted above',
-            cpu: this._ctx.cpu(sum(apps, a => a.cpu)),
-            mem: fmt.bytes(sum(apps, a => a.mem)),
+        const windows = windowOwners();
+        const all = [...merged.values()];
+        for (const a of all)
+            a.windowed = windows.apps.has(a.key) || a.pids.some(pid => windows.pids.has(pid));
+        const apps = all.filter(a => a.windowed);
+        const background = all.filter(a => !a.windowed);
+        const other = snap.apps_other ?? {units: 0, mem: 0, cpu: 0};
+        const newRow = () => new AppRow(this._ctx);
+        this._apps.sync(apps, a => a.key, newRow, {
+            shown: all.length > 0,
+            sub: 'apps with an open window, AI agents counted above',
+            cpu: this._ctx.cpu(sum(all, a => a.cpu) + other.cpu),
+            mem: fmt.bytes(sum(all, a => a.mem) + other.mem),
+        });
+        const hidden = other.units ? ` \u00b7 ${other.units} smaller not listed` : '';
+        this._background.sync(background, a => a.key, newRow, {
+            count: background.length + other.units,
+            shown: background.length + other.units > 0,
+            sub: `desktop session, services, apps without a window${hidden}`,
+            cpu: this._ctx.cpu(sum(background, a => a.cpu) + other.cpu),
+            mem: fmt.bytes(sum(background, a => a.mem) + other.mem),
         });
 
         const stacks = new Map();
