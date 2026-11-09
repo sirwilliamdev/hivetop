@@ -13,6 +13,7 @@ use crate::agents::{self, Provider, Role};
 use crate::apps::{self, UnitRef};
 use crate::cgroup::{self, UnitScanner};
 use crate::config::Config;
+use crate::desktop::Desktop;
 use crate::docker::{self, DockerScanner};
 use crate::format;
 use crate::history::History;
@@ -33,6 +34,8 @@ const SPARK_POINTS: usize = 72;
 const INFRA_WINDOW_SECS: u64 = 10;
 const MAX_SESSION_PROCS: usize = 25;
 const MAX_APPS: usize = 12;
+/// Desktop entries change only when software is installed or removed.
+const DESKTOP_RESCAN: Duration = Duration::from_secs(60);
 const MAX_APP_PROCS: usize = 8;
 const CMD_WIDTH: usize = 200;
 
@@ -85,6 +88,8 @@ pub struct Sampler {
     home: String,
     scanner: Scanner,
     units: UnitScanner,
+    desktop: Desktop,
+    desktop_at: Option<Instant>,
     docker: DockerScanner,
     providers: Vec<Box<dyn Provider>>,
     cmdlines: HashMap<ProcKey, Arc<str>>,
@@ -120,6 +125,8 @@ impl Sampler {
             home,
             scanner: Scanner::new(),
             units: UnitScanner::default(),
+            desktop: Desktop::default(),
+            desktop_at: None,
             docker: DockerScanner::default(),
             providers: Vec::new(),
             cmdlines: HashMap::new(),
@@ -387,7 +394,31 @@ impl Sampler {
             .filter(|p| p.comm == "systemd")
             .map(|p| p.pid)
             .min();
-        let owner = apps::assign(&procs, &unit_of, user_manager);
+        if self
+            .desktop_at
+            .is_none_or(|t| t.elapsed() >= DESKTOP_RESCAN)
+        {
+            self.desktop = Desktop::from_env(&self.roots.home);
+            self.desktop_at = Some(Instant::now());
+        }
+        let desktop = &self.desktop;
+        let owner = apps::assign(&procs, &unit_of, user_manager, &|comm| {
+            desktop.for_process(comm)
+        });
+        for unit in owner.values() {
+            if unit.name.starts_with(apps::DETACHED_PREFIX) && !units.contains_key(&unit.name) {
+                units.insert(
+                    unit.name.clone(),
+                    cgroup::UnitUsage {
+                        name: unit.name.clone(),
+                        id: unit.id.clone(),
+                        kind: unit.kind,
+                        mem: Default::default(),
+                        cpu: 0.0,
+                    },
+                );
+            }
+        }
 
         // Agent sessions.
         for pr in &mut self.providers {

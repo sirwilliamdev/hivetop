@@ -3,6 +3,7 @@ pub mod apps;
 pub mod cgroup;
 pub mod config;
 pub mod dbus;
+pub mod desktop;
 pub mod docker;
 pub mod format;
 pub mod history;

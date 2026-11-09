@@ -141,6 +141,9 @@ nothing measurable while it is closed.
     RssShmem) moves with them.
   - Portals open a second scope for the same app (`app-com.google.Chrome-<pid>`
     next to `app-gnome-google\x2dchrome-<pid>`). Both count as one app.
+  - An app can leave GNOME Shell's cgroup for the user manager before its
+    scope exists, and never get one (Sublime Text). When a launcher entry
+    carries the process name, it becomes its own app with its children.
 - **Containers**: listed through the Docker socket, measured through their
   cgroups. A container belongs to a session when the session's working
   directory is its compose `working_dir` or lies inside it (addon repos,

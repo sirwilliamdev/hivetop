@@ -12,6 +12,11 @@
 //! process in a portal scope goes to the launcher scope it descends from, and
 //! portal scopes named after the same PID as a launcher scope are aliases.
 //!
+//! An app can also leave GNOME Shell's cgroup for the user manager before its
+//! scope exists, and then never get one (Sublime Text forks and detaches). Such
+//! a process, when a launcher entry carries its name, becomes its own app unit
+//! together with its children, instead of counting as GNOME Shell.
+//!
 //! Processes already listed in the AI Agents section are then taken out of their
 //! app, so the menu shows each process once.
 
@@ -77,12 +82,18 @@ pub fn aliases<'a>(units: impl Iterator<Item = &'a UnitRef>) -> HashMap<String, 
         .collect()
 }
 
+/// Name prefix of the app units made for detached processes. Real unit names
+/// end in `.scope`, `.service` or `.slice`, so they never collide.
+pub const DETACHED_PREFIX: &str = "detached-";
+
 /// Unit each process is accounted to, keyed by PID. `unit_of` must already
-/// have aliases resolved.
+/// have aliases resolved. `entry_for` names the launcher entry of a process
+/// name, if any.
 pub fn assign(
     procs: &HashMap<i32, Proc>,
     unit_of: &HashMap<i32, Arc<UnitRef>>,
     user_manager: Option<i32>,
+    entry_for: &dyn Fn(&str) -> Option<String>,
 ) -> HashMap<i32, Arc<UnitRef>> {
     let nearest = |pid: i32, wanted: &dyn Fn(&UnitRef) -> bool| -> Option<(i32, Arc<UnitRef>)> {
         let mut cur = procs.get(&pid)?.ppid;
@@ -120,18 +131,59 @@ pub fn assign(
             }
         }
     }
+    let reparented = |pid: i32, own: &UnitRef| {
+        procs
+            .get(&pid)
+            .is_some_and(|p| Some(p.ppid) == user_manager)
+            && main_of
+                .get(own.name.as_str())
+                .is_some_and(|(_, main)| *main != pid)
+    };
+    let mut detached_units: HashMap<String, Arc<UnitRef>> = HashMap::new();
+    let mut detached: HashMap<i32, Arc<UnitRef>> = HashMap::new();
+    for (pid, own) in unit_of {
+        if own.kind == "app" || !reparented(*pid, own) {
+            continue;
+        }
+        let Some(p) = procs.get(pid) else {
+            continue;
+        };
+        if match_by_name(&p.comm, &app_units).is_some() {
+            continue;
+        }
+        if let Some(id) = entry_for(&p.comm) {
+            let unit = detached_units
+                .entry(id.clone())
+                .or_insert_with(|| {
+                    Arc::new(UnitRef::new("app", format!("{DETACHED_PREFIX}{id}"), id))
+                })
+                .clone();
+            detached.insert(*pid, unit);
+        }
+    }
+    let detached_root = |pid: i32, own: &UnitRef| -> Option<Arc<UnitRef>> {
+        let mut cur = pid;
+        for _ in 0..64 {
+            if let Some(u) = detached.get(&cur) {
+                return Some(u.clone());
+            }
+            cur = procs.get(&cur)?.ppid;
+            if unit_of.get(&cur)?.name != own.name {
+                return None;
+            }
+        }
+        None
+    };
     let mut out = HashMap::with_capacity(unit_of.len());
     for (pid, own) in unit_of {
         let target = if own.kind == "app" {
             lift(*pid, own.clone())
         } else if let Some((ancestor, unit)) = nearest(*pid, &|u| u.kind == "app") {
             lift(ancestor, unit)
+        } else if let Some(unit) = detached_root(*pid, own) {
+            unit
         } else {
-            let reparented_helper = procs.get(pid).is_some_and(|p| Some(p.ppid) == user_manager)
-                && main_of
-                    .get(own.name.as_str())
-                    .is_some_and(|(_, main)| main != pid);
-            reparented_helper
+            reparented(*pid, own)
                 .then(|| {
                     procs
                         .get(pid)
@@ -360,6 +412,9 @@ mod tests {
             proc(300, 50, "todoist", 8),
             proc(301, 10, "Todoist.AppImag", 9),
             proc(400, 20, "solaar", 10),
+            proc(500, 10, "sublime_text", 11),
+            proc(501, 500, "plugin_host-3.8", 12),
+            proc(502, 10, "chrome_crashpad", 13),
         ]
         .into_iter()
         .map(|p| (p.pid, p))
@@ -374,10 +429,14 @@ mod tests {
             (300, todoist.clone()),
             (301, shell.clone()),
             (400, solaar.clone()),
+            (500, shell.clone()),
+            (501, shell.clone()),
+            (502, shell.clone()),
         ]
         .into_iter()
         .collect();
-        let got = assign(&procs, &unit_of, Some(10));
+        let entry_for = |comm: &str| (comm == "sublime_text").then(|| "sublime_text".to_string());
+        let got = assign(&procs, &unit_of, Some(10), &entry_for);
         assert_eq!(
             got[&101], brave,
             "portal scope folds into the launcher scope above it"
@@ -390,5 +449,16 @@ mod tests {
         assert_eq!(got[&400], solaar, "autostart app keeps its own scope");
         assert_eq!(got[&60], shell, "shell helpers stay");
         assert_eq!(got[&50], shell, "the shell itself stays");
+        assert_eq!(
+            got[&500].id, "sublime_text",
+            "detached app gets its own unit"
+        );
+        assert_eq!(got[&500].name, "detached-sublime_text");
+        assert_eq!(got[&500].kind, "app");
+        assert!(
+            Arc::ptr_eq(&got[&500], &got[&501]),
+            "its children follow it"
+        );
+        assert_eq!(got[&502], shell, "no launcher entry: stays with the shell");
     }
 }
