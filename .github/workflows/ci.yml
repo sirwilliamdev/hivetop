@@ -27,4 +27,5 @@ jobs:
             node --check "$tmp/$(basename "$f" .js).mjs"
           done
           glib-compile-schemas --strict --dry-run "$ext/schemas"
-          bash -n install.sh scripts/nested-test.sh
+          bash -n install.sh scripts/nested-test.sh scripts/screenshots.sh
+          python3 -m py_compile scripts/demo-daemon.py

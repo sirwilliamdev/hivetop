@@ -12,6 +12,7 @@
 #   row:SECTION:INDEX         open the INDEX-th row of a section (expand the section first)
 #   hover:SECTION:INDEX       move a virtual pointer over that row
 #   shot:NAME                 screenshot to OUT/NAME.png
+#   shot-menu:NAME            screenshot of the top bar button and open menu only
 #   wait:SECS                 pause
 #   eval:JS                   run JS in the shell; `_ht` is the indicator
 #   cpu:LABEL:SECS            nested gnome-shell CPU use over SECS
@@ -21,6 +22,9 @@
 #
 # Example:
 #   scripts/nested-test.sh open row:agents:0 wait:1 shot:agent tab:history wait:2 shot:history
+#
+# HIVETOP_DAEMON=PATH runs PATH instead of target/release/hivetopd, such as
+# scripts/demo-daemon.py for made-up data.
 #
 # Exits non-zero when the shell logged JavaScript errors.
 set -euo pipefail
@@ -38,13 +42,14 @@ if [[ -z "${HIVETOP_NESTED_INNER:-}" ]]; then
             *) echo "unknown option $1" >&2; exit 2 ;;
         esac
     done
-    [[ -x "$REPO/target/release/hivetopd" ]] || { echo "run cargo build --release first" >&2; exit 2; }
+    daemon="$(realpath -m "${HIVETOP_DAEMON:-$REPO/target/release/hivetopd}")"
+    [[ -x "$daemon" ]] || { echo "$daemon missing: run cargo build --release first" >&2; exit 2; }
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     scheme="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null || echo "'default'")"
     # The nested bus must start with these set: it looks up D-Bus activation
     # files under XDG_DATA_HOME.
-    HIVETOP_NESTED_INNER=1 HIVETOP_OUT="$(realpath -m "$out")" HIVETOP_SCHEME="$scheme" \
+    HIVETOP_NESTED_INNER=1 HIVETOP_DAEMON="$daemon" HIVETOP_OUT="$(realpath -m "$out")" HIVETOP_SCHEME="$scheme" \
         XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data" GSETTINGS_BACKEND=keyfile \
         MUTTER_DEBUG_DUMMY_MODE_SPECS="$size" \
         dbus-run-session -- "$0" "$@"
@@ -55,7 +60,7 @@ OUT="$HIVETOP_OUT"
 mkdir -p "$OUT" "$XDG_DATA_HOME/gnome-shell/extensions/$UUID" "$XDG_DATA_HOME/dbus-1/services"
 cp -r "$REPO/extension/$UUID/." "$XDG_DATA_HOME/gnome-shell/extensions/$UUID/"
 glib-compile-schemas "$XDG_DATA_HOME/gnome-shell/extensions/$UUID/schemas"
-printf '[D-BUS Service]\nName=io.github.sirwilliamdev.Hivetop\nExec=%s/target/release/hivetopd\n' "$REPO" \
+printf '[D-BUS Service]\nName=io.github.sirwilliamdev.Hivetop\nExec=%s\n' "$HIVETOP_DAEMON" \
     > "$XDG_DATA_HOME/dbus-1/services/io.github.sirwilliamdev.Hivetop.service"
 gsettings set org.gnome.shell enabled-extensions "['$UUID']"
 gsettings set org.gnome.desktop.interface color-scheme "$HIVETOP_SCHEME"
@@ -96,6 +101,17 @@ for step in "$@"; do
             gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Screenshot \
                 --method org.gnome.Shell.Screenshot.Screenshot false false "$OUT/$a.png" > /dev/null
             echo "screenshot $OUT/$a.png" ;;
+        shot-menu)
+            read -r x y w h < <(ev "const m = 12; const box = [_ht, _ht.menu.actor].map(x => {
+                    const [px, py] = x.get_transformed_position(); const [pw, ph] = x.get_transformed_size();
+                    return [px, py, px + pw, py + ph]; });
+                const x0 = Math.max(0, Math.min(...box.map(b => b[0])) - m), y0 = 0;
+                const x1 = Math.min(global.stage.width, Math.max(...box.map(b => b[2])) + m);
+                const y1 = Math.min(global.stage.height, Math.max(...box.map(b => b[3])) + m);
+                [x0, y0, x1 - x0, y1 - y0].map(Math.round).join(' ')" | grep -oE '[0-9]+( [0-9]+){3}')
+            gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Screenshot \
+                --method org.gnome.Shell.Screenshot.ScreenshotArea "$x" "$y" "$w" "$h" false "$OUT/$a.png" > /dev/null
+            echo "screenshot $OUT/$a.png (${w}x$h)" ;;
         wait) sleep "$a" ;;
         eval) echo "eval: $(ev "${step#eval:}")" ;;
         cpu)
