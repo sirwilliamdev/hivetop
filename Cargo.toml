@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Lightweight GNOME top-bar resource monitor that groups usage by AI agent session, app and container"
 license = "MIT"
+repository = "https://github.com/sirwilliamdev/hivetop"
+readme = "README.md"
 publish = false
 
 [lib]

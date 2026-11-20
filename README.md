@@ -53,6 +53,13 @@ Settings: `~/.config/hivetop/config.toml`, see
 [`dist/config.example.toml`](dist/config.example.toml). Design notes:
 [`docs/design.md`](docs/design.md).
 
+## Privacy
+
+hivetop runs on your machine only and sends nothing over the network. From
+Claude Code's files it keeps metadata (titles, model, token counts, file
+paths), never your prompts or messages. Details in the
+[security notes](docs/design.md#security-notes).
+
 ## License
 
 MIT, see [`LICENSE`](LICENSE).
