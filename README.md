@@ -29,3 +29,7 @@ Remove with `./install.sh --uninstall`.
 - **Config**: `~/.config/hivetop/config.toml`, see [`dist/config.example.toml`](dist/config.example.toml).
 
 Design notes: [`docs/design.md`](docs/design.md).
+
+## License
+
+MIT, see [`LICENSE`](LICENSE).
