@@ -17,6 +17,10 @@
 //! a process, when a launcher entry carries its name, becomes its own app unit
 //! together with its children, instead of counting as GNOME Shell.
 //!
+//! An app can also start helper units of its own, outside any launcher (Orca's
+//! terminal daemon scope and the slice holding its terminals). Such a unit,
+//! when a process of another app forked its first process, counts as that app.
+//!
 //! Processes already listed in the AI Agents section are then taken out of their
 //! app, so the menu shows each process once.
 
@@ -80,6 +84,61 @@ pub fn aliases<'a>(units: impl Iterator<Item = &'a UnitRef>) -> HashMap<String, 
         .into_iter()
         .filter_map(|(name, pid)| Some((name.to_string(), launchers.get(&pid)?.to_string())))
         .collect()
+}
+
+/// Unit name -> unit of the app that made it, for helper units an app starts
+/// for itself rather than through a launcher (Orca runs its terminal daemon in
+/// `orca-daemon-<uuid>.scope` and the terminals in `orca_ptys_<daemon>.slice`).
+/// A unit is adopted when its oldest process was forked by a process of
+/// another app unit, its name is not a launcher's (`app-*`, `snap.*`) and no
+/// launcher entry names it: an app opened from another app keeps its own row.
+/// Chains resolve to the last app (the terminals go to Orca, not its daemon).
+/// `unit_of` must already have portal aliases resolved.
+pub fn adopted(
+    procs: &HashMap<i32, Proc>,
+    unit_of: &HashMap<i32, Arc<UnitRef>>,
+    is_launcher: &dyn Fn(&str) -> bool,
+) -> HashMap<String, String> {
+    let mut oldest: HashMap<&str, (u64, i32)> = HashMap::new();
+    for (pid, unit) in unit_of {
+        if let Some(p) = procs.get(pid) {
+            let e = oldest.entry(unit.name.as_str()).or_insert((p.start, *pid));
+            if (p.start, *pid) < *e {
+                *e = (p.start, *pid);
+            }
+        }
+    }
+    let mut parent: HashMap<String, String> = HashMap::new();
+    for (name, (_, pid)) in &oldest {
+        let unit = &unit_of[pid];
+        if unit.kind != "app"
+            || name.starts_with("app-")
+            || name.starts_with("snap.")
+            || is_launcher(&unit.id)
+        {
+            continue;
+        }
+        let Some(by) = procs.get(pid).and_then(|p| unit_of.get(&p.ppid)) else {
+            continue;
+        };
+        if by.kind == "app" && by.name != unit.name {
+            parent.insert(name.to_string(), by.name.clone());
+        }
+    }
+    let mut out = HashMap::with_capacity(parent.len());
+    for from in parent.keys() {
+        let mut to = &parent[from];
+        for _ in 0..8 {
+            match parent.get(to) {
+                Some(next) => to = next,
+                None => break,
+            }
+        }
+        if to != from && !parent.contains_key(to) {
+            out.insert(from.clone(), to.clone());
+        }
+    }
+    out
 }
 
 /// Name prefix of the app units made for detached processes. Real unit names
@@ -293,6 +352,59 @@ mod tests {
                 cpu,
             },
         )
+    }
+
+    #[test]
+    fn helper_units_an_app_starts_go_to_that_app() {
+        let procs: HashMap<i32, Proc> = [
+            proc(3273, 1, "gnome-shell", 1),
+            proc(6449, 3273, "orca-ide", 10),
+            proc(6687, 6449, "orca-ide", 11),
+            proc(13905, 6687, "fish", 20),
+            proc(13977, 13905, "claude", 21),
+            proc(7000, 6449, "brave", 30),
+            proc(8000, 3273, "helperd", 40),
+        ]
+        .into_iter()
+        .map(|p| (p.pid, p))
+        .collect();
+        let shell = unit(
+            "session",
+            "org.gnome.Shell@wayland.service",
+            "org.gnome.Shell",
+        );
+        let orca = unit("app", "app-gnome-orca-6449.scope", "orca");
+        let daemon = unit("app", "orca-daemon-7ba5.scope", "orca-daemon-7ba5");
+        let ptys = unit(
+            "app",
+            "orca_ptys_orca_daemon_7ba5.slice",
+            "orca_ptys_orca_daemon_7ba5",
+        );
+        let brave = unit("app", "brave.scope", "brave");
+        let helper = unit("app", "helperd.scope", "helperd");
+        let unit_of: HashMap<i32, Arc<UnitRef>> = [
+            (3273, shell),
+            (6449, orca),
+            (6687, daemon),
+            (13905, ptys.clone()),
+            (13977, ptys),
+            (7000, brave),
+            (8000, helper),
+        ]
+        .into_iter()
+        .collect();
+        let got = adopted(&procs, &unit_of, &|id| id == "brave");
+        let want: HashMap<String, String> = [
+            ("orca-daemon-7ba5.scope", "app-gnome-orca-6449.scope"),
+            (
+                "orca_ptys_orca_daemon_7ba5.slice",
+                "app-gnome-orca-6449.scope",
+            ),
+        ]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        assert_eq!(got, want);
     }
 
     #[test]

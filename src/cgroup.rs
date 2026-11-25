@@ -10,6 +10,16 @@ const SLICES: [(&str, &str); 3] = [
     ("background.slice", "background"),
 ];
 
+/// Kind of a slice an app puts right under the user manager, next to the
+/// standard ones (Orca keeps its terminals in `orca_ptys_<daemon>.slice`).
+const OWN_SLICE_KIND: &str = "app";
+
+/// A slice an app made right under the user manager, such as
+/// `orca_ptys_orca_daemon_<uuid>.slice`.
+fn is_own_slice(name: &str) -> bool {
+    name.ends_with(".slice") && !SLICES.iter().any(|(s, _)| *s == name)
+}
+
 /// Turns a systemd unit name into a desktop-ish app id.
 ///
 /// `app-gnome-codium-7128.scope` -> `codium`,
@@ -52,6 +62,7 @@ pub fn parse_app_id(name: &str) -> Option<String> {
         let base = name
             .strip_suffix(".service")
             .or_else(|| name.strip_suffix(".scope"))
+            .or_else(|| name.strip_suffix(".slice"))
             .unwrap_or(name);
         unescape(base.split('@').next()?)
     };
@@ -114,10 +125,18 @@ fn stat_value(s: &str, key: &str) -> Option<u64> {
 
 /// The systemd user unit a cgroup path belongs to: its slice kind
 /// (`app`, `session`, `background`) and the unit directory name right below
-/// the slice. Nested cgroups (terminal tabs, slices) map to that top unit.
+/// the slice. Nested cgroups (terminal tabs, slices) map to that top unit. A
+/// slice an app made right under the user manager is a unit of its own.
 pub fn unit_from_cgroup_path(path: &str) -> Option<(&'static str, String)> {
-    let mut parts = path.split('/');
+    let mut parts = path.split('/').peekable();
     while let Some(p) = parts.next() {
+        if p.starts_with("user@")
+            && p.ends_with(".service")
+            && let Some(&next) = parts.peek()
+            && is_own_slice(next)
+        {
+            return Some((OWN_SLICE_KIND, next.to_string()));
+        }
         if let Some((_, kind)) = SLICES.iter().find(|(slice, _)| *slice == p) {
             return parts
                 .next()
@@ -154,43 +173,51 @@ impl UnitScanner {
             .join("user.slice")
             .join(format!("user-{uid}.slice"))
             .join(format!("user@{uid}.service"));
+        let mut found: Vec<(PathBuf, String, &'static str)> = Vec::new();
+        let subdirs = |dir: &Path| -> Vec<(PathBuf, String)> {
+            fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|e| Some((e.path(), e.file_name().into_string().ok()?)))
+                .collect()
+        };
+        for (slice, kind) in SLICES {
+            for (dir, name) in subdirs(&base.join(slice)) {
+                found.push((dir, name, kind));
+            }
+        }
+        for (dir, name) in subdirs(&base) {
+            if is_own_slice(&name) {
+                found.push((dir, name, OWN_SLICE_KIND));
+            }
+        }
         let mut units = HashMap::new();
         let mut next = HashMap::new();
-        for (slice, kind) in SLICES {
-            let Ok(entries) = fs::read_dir(base.join(slice)) else {
+        for (dir, name, kind) in found {
+            let Some(id) = parse_app_id(&name) else {
                 continue;
             };
-            for e in entries.flatten() {
-                if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    continue;
+            let usage = read_cpu_usec(&dir);
+            let cpu = match self.prev.get(&dir) {
+                Some(&prev) if elapsed_secs > 0.0 => {
+                    usage.saturating_sub(prev) as f64 / (elapsed_secs * 1e6) * 100.0
                 }
-                let Ok(name) = e.file_name().into_string() else {
-                    continue;
-                };
-                let Some(id) = parse_app_id(&name) else {
-                    continue;
-                };
-                let dir = e.path();
-                let usage = read_cpu_usec(&dir);
-                let cpu = match self.prev.get(&dir) {
-                    Some(&prev) if elapsed_secs > 0.0 => {
-                        usage.saturating_sub(prev) as f64 / (elapsed_secs * 1e6) * 100.0
-                    }
-                    _ => 0.0,
-                };
-                next.insert(dir.clone(), usage);
-                let mem = read_mem(&dir);
-                units.insert(
-                    name.clone(),
-                    UnitUsage {
-                        name,
-                        id,
-                        kind,
-                        mem,
-                        cpu,
-                    },
-                );
-            }
+                _ => 0.0,
+            };
+            next.insert(dir.clone(), usage);
+            let mem = read_mem(&dir);
+            units.insert(
+                name.clone(),
+                UnitUsage {
+                    name,
+                    id,
+                    kind,
+                    mem,
+                    cpu,
+                },
+            );
         }
         self.prev = next;
         units
@@ -232,6 +259,10 @@ mod tests {
             ("snap.firefox.firefox-0a1b.scope", "firefox"),
             ("org.gnome.Shell@wayland.service", "org.gnome.Shell"),
             ("pipewire.service", "pipewire"),
+            (
+                "orca_ptys_orca_daemon_7ba5.slice",
+                "orca_ptys_orca_daemon_7ba5",
+            ),
         ];
         for (name, want) in cases {
             assert_eq!(parse_app_id(name).as_deref(), Some(want), "{name}");
@@ -254,6 +285,13 @@ mod tests {
         let shell = "/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.Shell@wayland.service";
         assert_eq!(unit_from_cgroup_path(shell).unwrap().0, "session");
         assert_eq!(unit_from_cgroup_path("/system.slice/docker.service"), None);
+        let pty = "/user.slice/user-1000.slice/user@1000.service/orca_ptys_orca_daemon_7ba5.slice/orca_pty_orca_daemon_7ba5_1.scope";
+        assert_eq!(
+            unit_from_cgroup_path(pty),
+            Some(("app", "orca_ptys_orca_daemon_7ba5.slice".into()))
+        );
+        let manager = "/user.slice/user-1000.slice/user@1000.service/init.scope";
+        assert_eq!(unit_from_cgroup_path(manager), None);
     }
 
     #[test]

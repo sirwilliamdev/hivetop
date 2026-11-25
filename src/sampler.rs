@@ -371,7 +371,26 @@ impl Sampler {
                 )
             })
             .collect();
-        let alias = apps::aliases(unit_refs.values().map(|u| u.as_ref()));
+        if self
+            .desktop_at
+            .is_none_or(|t| t.elapsed() >= DESKTOP_RESCAN)
+        {
+            self.desktop = Desktop::from_env(&self.roots.home);
+            self.desktop_at = Some(Instant::now());
+        }
+        let resolve = |alias: &HashMap<String, String>| -> HashMap<i32, Arc<UnitRef>> {
+            procs
+                .values()
+                .filter_map(|p| {
+                    let raw = self.proc_units.get(&p.key())?.clone()?;
+                    let name = alias.get(&raw.name).unwrap_or(&raw.name);
+                    Some((p.pid, unit_refs.get(name).cloned().unwrap_or(raw)))
+                })
+                .collect()
+        };
+        let mut alias = apps::aliases(unit_refs.values().map(|u| u.as_ref()));
+        let adopted = apps::adopted(&procs, &resolve(&alias), &|id| self.desktop.launcher(id));
+        alias.extend(adopted);
         for (from, to) in &alias {
             if let Some(a) = units.remove(from)
                 && let Some(t) = units.get_mut(to)
@@ -382,26 +401,12 @@ impl Sampler {
                 t.cpu += a.cpu;
             }
         }
-        let unit_of: HashMap<i32, Arc<UnitRef>> = procs
-            .values()
-            .filter_map(|p| {
-                let raw = self.proc_units.get(&p.key())?.clone()?;
-                let name = alias.get(&raw.name).unwrap_or(&raw.name);
-                Some((p.pid, unit_refs.get(name).cloned().unwrap_or(raw)))
-            })
-            .collect();
+        let unit_of = resolve(&alias);
         let user_manager = procs
             .values()
             .filter(|p| p.comm == "systemd")
             .map(|p| p.pid)
             .min();
-        if self
-            .desktop_at
-            .is_none_or(|t| t.elapsed() >= DESKTOP_RESCAN)
-        {
-            self.desktop = Desktop::from_env(&self.roots.home);
-            self.desktop_at = Some(Instant::now());
-        }
         let desktop = &self.desktop;
         let owner = apps::assign(&procs, &unit_of, user_manager, &|comm| {
             desktop.for_process(comm)
