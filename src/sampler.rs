@@ -17,6 +17,7 @@ use crate::desktop::Desktop;
 use crate::docker::{self, DockerScanner};
 use crate::format;
 use crate::history::History;
+use crate::hosts::{self, Host};
 use crate::model::{
     AgentKind, AgentState, AgentView, AppTotals, AppView, KillTargets, OrphanView, Point, ProcView,
     Snapshot, SystemView, ToolingView, round1,
@@ -98,6 +99,8 @@ pub struct Sampler {
     roles: HashMap<ProcKey, (usize, Role)>,
     proc_units: HashMap<ProcKey, Option<Arc<UnitRef>>>,
     session_cwds: HashMap<String, String>,
+    /// App each session runs in, read once from its environment.
+    session_hosts: HashMap<String, Option<Host>>,
     /// State and since when, for sessions whose provider does not say.
     states: HashMap<String, (AgentState, u64)>,
     orphans: OrphanTracker,
@@ -134,6 +137,7 @@ impl Sampler {
             roles: HashMap::new(),
             proc_units: HashMap::new(),
             session_cwds: HashMap::new(),
+            session_hosts: HashMap::new(),
             states: HashMap::new(),
             orphans: OrphanTracker::default(),
             tracker_path: None,
@@ -494,7 +498,13 @@ impl Sampler {
                 format::short_command(&text, &self.home, 80)
             });
             let project = agents::project_name(&cwd);
-            let app = owner.get(&root).map(|u| u.id.clone());
+            let host = self
+                .session_hosts
+                .entry(key.clone())
+                .or_insert_with(|| hosts::read(&self.roots.proc, root))
+                .clone()
+                .unwrap_or_default();
+            let app = owner.get(&root).map(|u| u.id.clone()).or(host.app);
             let scratchpad = self.providers[pi].scratchpad(&key, &meta);
             let details = self.providers[pi].details(&key, &meta, ts);
             let rss = self.owned(root) + members.iter().map(|&m| self.owned(m)).sum::<u64>();
@@ -571,6 +581,7 @@ impl Sampler {
                 activity,
                 scratchpad,
                 ancestors: procscan::ancestors(root, &procs),
+                focus: host.focus,
                 processes,
                 key: key.clone(),
                 ..Default::default()
@@ -579,6 +590,7 @@ impl Sampler {
         }
         let live_keys: HashSet<String> = sessions.iter().map(|s| s.key.clone()).collect();
         self.session_cwds.retain(|k, _| live_keys.contains(k));
+        self.session_hosts.retain(|k, _| live_keys.contains(k));
         self.states.retain(|k, _| live_keys.contains(k));
         self.session_sparks.retain(|k, _| live_keys.contains(k));
         for pr in &mut self.providers {

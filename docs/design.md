@@ -54,8 +54,13 @@ orange row per ended session that left work running, then Background (SDK
 sessions such as plugin observers, and each provider's tooling). A provider
 tag shows on rows only when agents of two providers run.
 
-Expanding an agent shows the actions **Go to <app>** (raises the VSCodium or
-terminal window that hosts the session), **Scratchpad**, **Copy details** and
+Expanding an agent shows the actions **Go to <app>** (raises the VSCodium,
+Orca or terminal window that hosts the session; for an Orca terminal agent it
+also switches to its tab with `orca terminal switch`, read from the session's
+`ORCA_TERMINAL_HANDLE`; for an Orca chat, `hivetop orca-show` asks Orca for
+the chat's workspace and opens it, since Orca has no command to show one chat
+and cannot open folder workspaces from its CLI), **Scratchpad**, **Copy
+details** and
 **Kill session** (for a background job: **Attach**, which copies `claude
 attach <id>`, and **Stop job**); then model, permission mode, branch,
 context, tokens, cache reads and outputs; then subagents in a tinted panel

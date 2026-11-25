@@ -211,6 +211,10 @@ pub struct AgentView {
     pub container_mem: u64,
     pub container_cpu: f64,
     pub ancestors: Vec<i32>,
+    /// Command that shows the session's own pane in its app (a tab of Orca),
+    /// run without a shell after the window is raised. Empty when raising the
+    /// window is all there is.
+    pub focus: Vec<String>,
     pub spark: Vec<Point>,
     pub processes: Vec<ProcView>,
 }

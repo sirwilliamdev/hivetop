@@ -422,6 +422,12 @@ fn main() -> Res<()> {
         println!("{USAGE}");
         return Ok(());
     };
+    if cmd == "orca-show" {
+        let (Some(cli), Some(session)) = (args.get(1), args.get(2)) else {
+            return Err("usage: hivetop orca-show <orca command> <session id>".into());
+        };
+        return Ok(hivetop::hosts::orca_show(cli, session)?);
+    }
     let conn = zbus::blocking::Connection::session()?;
     match cmd.as_str() {
         "status" => {

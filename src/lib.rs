@@ -7,6 +7,7 @@ pub mod desktop;
 pub mod docker;
 pub mod format;
 pub mod history;
+pub mod hosts;
 pub mod model;
 pub mod notify;
 pub mod orphans;
